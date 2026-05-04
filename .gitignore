@@ -1,0 +1,22 @@
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+
+# Database
+lifeline.db
+*.sqlite3
+
+# Build
+build/
+dsa_engine.exe
+*.o
+
+# IDE
+.vscode/
+.idea/
