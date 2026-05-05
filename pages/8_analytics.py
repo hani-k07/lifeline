@@ -22,7 +22,7 @@ footer,#MainMenu{visibility:hidden;} [data-testid='stSidebarNav'] { display: non
 .block-container{padding-top:1.5rem!important;}
 [data-testid="stSidebar"]{background:linear-gradient(180deg,#0D0D1A 0%,#1C1C2E 100%)!important;border-right:1px solid rgba(255,65,108,0.2);}
 [data-testid="stSidebar"] *{color:#ECF0F1!important;}
-.glass-card{background:rgba(20,20,35,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:24px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease;}
+.glass-card{background:rgba(20,20,35,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease;}
 .metric-card{background:rgba(20,20,35,0.8);border:1px solid rgba(255,255,255,0.06);border-left:3px solid #ff416c;border-radius:12px;padding:18px 20px;}
 .metric-value{font-size:2rem;font-weight:700;background:linear-gradient(135deg,#ff416c,#ff4b2b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1.1;}
 .metric-label{font-size:0.72rem;color:#95A5A6;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;}
@@ -55,7 +55,7 @@ with r1c1:
     df_bg = pd.DataFrame(list(bg_data.items()), columns=["Group","Count"])
     if not df_bg.empty:
         fig1 = px.bar(df_bg, x="Group", y="Count", color="Count", color_continuous_scale=["#302b63","#ff416c"])
-        fig1.update_layout(**dark, coloraxis_showscale=False)
+        fig1.update_layout(**dark, coloraxis_showscale=False, height=250)
         st.plotly_chart(fig1, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -65,7 +65,7 @@ with r1c2:
     df_comp = pd.DataFrame(list(comp_data.items()), columns=["Comp","Count"])
     if not df_comp.empty:
         fig2 = px.pie(df_comp, values="Count", names="Comp", hole=0.6, color_discrete_sequence=["#ff416c","#FFB347","#00D2AA","#3498DB","#9B59B6"])
-        fig2.update_layout(**dark)
+        fig2.update_layout(**dark, height=250)
         st.plotly_chart(fig2, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -78,7 +78,7 @@ with r2c1:
         df_u = pd.DataFrame(units)
         hm = pd.crosstab(df_u["hospital_name"], df_u["blood_group"])
         fig3 = px.imshow(hm, color_continuous_scale=["#1a1a2e","#ff416c"])
-        fig3.update_layout(**dark, coloraxis_showscale=False)
+        fig3.update_layout(**dark, coloraxis_showscale=False, height=250)
         st.plotly_chart(fig3, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -88,7 +88,7 @@ with r2c2:
     h_data = [{"Hospital": h["name"][:15], "Units": len([u for u in units if u["hospital_id"]==h["id"]])} for h in hospitals]
     df_h = pd.DataFrame(h_data)
     fig4 = px.bar(df_h, x="Hospital", y="Units", color="Units", color_continuous_scale=["#302b63","#00D2AA"])
-    fig4.update_layout(**dark, coloraxis_showscale=False)
+    fig4.update_layout(**dark, coloraxis_showscale=False, height=250)
     st.plotly_chart(fig4, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
