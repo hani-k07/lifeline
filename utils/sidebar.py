@@ -10,6 +10,17 @@ def render_sidebar():
     role     = st.session_state.get("user_role")
     hosp_id  = st.session_state.get("hospital_id")
     fullname = st.session_state.get("full_name", "User")
+    user_id  = st.session_state.get("user_id")
+
+    # Check for deactivation
+    from utils.supabase_client import _q
+    user_data = _q("SELECT is_active FROM users WHERE id=?", (user_id,))
+    if user_data and user_data[0]['is_active'] == 0:
+        st.sidebar.error("🚨 ACCOUNT DEACTIVATED")
+        if st.sidebar.button("LOGOUT NOW"):
+            st.session_state.clear()
+            st.rerun()
+        st.stop()
     
     with st.sidebar:
         if os.path.exists("logo.png"):
@@ -76,30 +87,39 @@ def render_sidebar():
         [data-testid="stPageLink-NavLink"]:hover p {
             color: #ff416c !important;
         }
-        /* Hide page icons globally in the custom sidebar */
         [data-testid="stPageLink-Icon"] { display: none !important; }
         [data-testid="stPageLink-NavLink"] span:first-child:not([class]) { display: none !important; }
         </style>
         """, unsafe_allow_html=True)
         
-        st.page_link("app.py", label="Home")
-        st.page_link("pages/1_dashboard.py", label="Dashboard")
-        st.page_link("pages/2_inventory.py", label="Inventory")
-        st.page_link("pages/3_emergency.py", label="Emergency")
-        st.page_link("pages/4_exchange.py", label="Exchange")
-        st.page_link("pages/5_screening.py", label="Screening")
-        st.page_link("pages/6_contracts.py", label="Contracts")
-        st.page_link("pages/7_transfusion.py", label="Transfusion")
-        st.page_link("pages/8_analytics.py", label="Analytics")
+        st.page_link("app.py", label="🏠 Home")
+        st.page_link("pages/1_dashboard.py", label="📊 Dashboard")
+        st.page_link("pages/2_inventory.py", label="📦 Inventory")
+        st.page_link("pages/3_emergency.py", label="🚨 Emergency")
+        
+        if role in ["super_admin", "hospital_admin"]:
+            st.page_link("pages/4_exchange.py", label="🔄 Exchange")
+            
+        st.page_link("pages/5_screening.py", label="💉 Screening")
+        st.page_link("pages/6_contracts.py", label="📄 Contracts")
+        st.page_link("pages/7_transfusion.py", label="🩸 Transfusion")
+        
+        if role in ["super_admin", "hospital_admin"]:
+            st.page_link("pages/8_analytics.py", label="📈 Analytics")
         
         if role == "super_admin":
-            st.page_link("pages/9_admin.py", label="Admin")
+            st.page_link("pages/9_admin.py", label="🛡️ Admin Panel")
+            
+        if role in ["super_admin", "hospital_admin"]:
+            st.page_link("pages/10_hospital_mgmt.py", label="🏥 Hospital Mgmt")
+            
+        st.page_link("pages/11_my_profile.py", label="👤 My Profile")
 
         st.markdown("<hr style='border-color:rgba(255,255,255,0.06); margin:8px 0;'>", unsafe_allow_html=True)
 
         st.markdown("""<div style='text-align:center;'>
             <span class='live-dot'></span>
-            <span style='color:#00D2AA; font-size:0.82rem; font-weight:600;'>4 / 4 Hospitals Online</span>
+            <span style='color:#00D2AA; font-size:0.82rem; font-weight:600;'>Network Active</span>
         </div>""", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 

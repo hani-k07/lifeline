@@ -42,7 +42,7 @@ echo.
 echo [3/3] Launching LIFELINE Streamlit Application...
 echo NOTE: Ensure your Supabase URL and Key are in the .env file!
 echo.
-python -m streamlit run app.py
 
+python -m streamlit run app.py
 
 pause

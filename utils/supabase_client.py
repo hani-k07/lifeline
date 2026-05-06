@@ -24,6 +24,7 @@ def _q(sql, params=()):
         conn.close()
         return rows
     except Exception as e:
+        print(f"Query Error: {e}")
         return []
 
 def _x(sql, params=()):
@@ -35,6 +36,7 @@ def _x(sql, params=()):
         conn.close()
         return True
     except Exception as e:
+        print(f"Execute Error: {e}")
         return False
 
 def _hash(pw):
@@ -46,12 +48,28 @@ def init_db():
     c = conn.cursor()
     c.executescript("""
     CREATE TABLE IF NOT EXISTS hospitals (
-        id TEXT PRIMARY KEY, name TEXT, city TEXT, address TEXT,
-        contact_number TEXT, lat REAL, lng REAL, is_active INTEGER DEFAULT 1
+        id TEXT PRIMARY KEY, 
+        name TEXT, 
+        city TEXT, 
+        address TEXT,
+        contact_number TEXT, 
+        lat REAL, 
+        lng REAL, 
+        hospital_type TEXT DEFAULT 'Public',
+        status TEXT DEFAULT 'active'
     );
     CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY, email TEXT UNIQUE, password TEXT,
-        full_name TEXT, role TEXT, hospital_id TEXT
+        id TEXT PRIMARY KEY, 
+        email TEXT UNIQUE, 
+        password TEXT,
+        full_name TEXT, 
+        role TEXT, 
+        hospital_id TEXT,
+        phone_number TEXT DEFAULT '',
+        employee_id TEXT DEFAULT '',
+        department TEXT DEFAULT 'Blood Bank',
+        shift TEXT DEFAULT 'Morning',
+        is_active INTEGER DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS donors (
         id TEXT PRIMARY KEY, cnic TEXT UNIQUE, full_name TEXT,
@@ -119,20 +137,40 @@ init_db()
 
 def auth_login(email: str, password: str):
     hashed = _hash(password)
-    rows = _q("SELECT id, email, role, hospital_id, full_name FROM users WHERE email=? AND password=?",
+    rows = _q("""SELECT id, email, role, hospital_id, full_name, 
+                 department, shift, employee_id, phone_number, is_active 
+                 FROM users WHERE email=? AND password=?""",
               (email, hashed))
     if rows:
-        return {"id": rows[0]["id"], "role": rows[0]["role"],
-                "hospital_id": rows[0]["hospital_id"], "full_name": rows[0]["full_name"]}
+        if rows[0]["is_active"] == 0:
+            return "DEACTIVATED"
+        return dict(rows[0])
     return None
 
-def auth_signup(email, password, full_name, role, hospital_id):
+def auth_signup(email, password, full_name, role, hospital_id, **kwargs):
     try:
         uid = str(uuid.uuid4())
-        return _x("INSERT INTO users (id,email,password,full_name,role,hospital_id) VALUES (?,?,?,?,?,?)",
-                  (uid, email, _hash(password), full_name, role, hospital_id))
-    except:
+        phone = kwargs.get("phone_number", "")
+        emp_id = kwargs.get("employee_id", "")
+        dept = kwargs.get("department", "Blood Bank")
+        shift = kwargs.get("shift", "Morning")
+        
+        return _x("""INSERT INTO users (id,email,password,full_name,role,hospital_id,
+                     phone_number,employee_id,department,shift,is_active) 
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                  (uid, email, _hash(password), full_name, role, hospital_id,
+                   phone, emp_id, dept, shift, 1))
+    except Exception as e:
+        print(f"Signup Error: {e}")
         return False
+
+def change_password(user_id, current_pass, new_pass):
+    hashed_curr = _hash(current_pass)
+    user = _q("SELECT id FROM users WHERE id=? AND password=?", (user_id, hashed_curr))
+    if not user:
+        return False
+    hashed_new = _hash(new_pass)
+    return _x("UPDATE users SET password = ? WHERE id = ?", (hashed_new, user_id))
 
 # ─────────────────────────────────────────────
 # HOSPITALS
@@ -144,6 +182,73 @@ def get_hospitals() -> list:
 def get_hospital_by_id(hid: str) -> dict:
     rows = _q("SELECT * FROM hospitals WHERE id=?", (hid,))
     return rows[0] if rows else {}
+
+def add_hospital(hospital: dict) -> str:
+    new_id = str(uuid.uuid4())
+    ok = _x("""INSERT INTO hospitals (id, name, city, address, contact_number, 
+               lat, lng, hospital_type, status) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (new_id, hospital['name'], hospital.get('city', 'Lahore'), 
+             hospital.get('address', ''), hospital.get('contact_number', ''),
+             hospital.get('lat', 31.5734), hospital.get('lng', 74.3044),
+             hospital.get('hospital_type', 'Public'), hospital.get('status', 'active')))
+    return new_id if ok else ""
+
+def update_hospital(hospital_id, fields: dict) -> bool:
+    allowed = ['address', 'contact_number', 'status']
+    updates = []
+    params = []
+    for k, v in fields.items():
+        if k in allowed:
+            updates.append(f"{k} = ?")
+            params.append(v)
+    
+    if not updates:
+        return False
+        
+    params.append(hospital_id)
+    return _x(f"UPDATE hospitals SET {', '.join(updates)} WHERE id = ?", tuple(params))
+
+# ─────────────────────────────────────────────
+# WORKERS / USERS
+# ─────────────────────────────────────────────
+
+def get_all_users():
+    sql = """SELECT u.*, h.name as hospital_name 
+             FROM users u 
+             LEFT JOIN hospitals h ON u.hospital_id = h.id 
+             WHERE u.role != 'super_admin' 
+             ORDER BY h.name, u.full_name"""
+    return _q(sql)
+
+def get_workers_by_hospital(hospital_id=None):
+    if hospital_id:
+        sql = """SELECT u.*, h.name as hospital_name 
+                 FROM users u 
+                 LEFT JOIN hospitals h ON u.hospital_id = h.id 
+                 WHERE u.hospital_id = ? AND u.role != 'super_admin' 
+                 ORDER BY u.full_name"""
+        return _q(sql, (hospital_id,))
+    else:
+        return get_all_users()
+
+def deactivate_user(user_id) -> bool:
+    return _x("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
+
+def reactivate_user(user_id) -> bool:
+    return _x("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
+
+def reset_user_password(user_id, new_password) -> bool:
+    hashed = _hash(new_password)
+    return _x("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
+
+def update_user_role(user_id, new_role):
+    if new_role not in ["hospital_admin", "staff"]:
+        return False
+    return _x("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+
+def update_user_shift(user_id, shift, dept) -> bool:
+    return _x("UPDATE users SET shift = ?, department = ? WHERE id = ?", (shift, dept, user_id))
 
 # ─────────────────────────────────────────────
 # BLOOD UNITS
@@ -392,7 +497,10 @@ def add_audit_log(action, actor, hospital_id, entity_type, entity_id, details) -
                entity_type, str(entity_id), payload, prev_hash, curr_hash,
                datetime.now().isoformat()))
 
-def get_audit_logs(limit=50, hospital_id=None) -> list:
+def get_audit_logs(limit=50, hospital_id=None, actor_email=None) -> list:
+    if actor_email:
+        return _q("SELECT * FROM audit_logs WHERE actor_id=? ORDER BY created_at DESC LIMIT ?",
+                  (actor_email, limit))
     if hospital_id:
         return _q("SELECT * FROM audit_logs WHERE hospital_id=? ORDER BY created_at DESC LIMIT ?",
                   (hospital_id, limit))
@@ -499,6 +607,25 @@ def get_dashboard_stats(hospital_id=None) -> dict:
         "units_by_component":  components,
         "temp_alerts":         temp_alerts,
         "breach_risk_contracts": breach_risk,
+    }
+
+def get_hospital_stats(hospital_id) -> dict:
+    # worker_count, unit_count, active_contracts, departments{}
+    workers = get_workers_by_hospital(hospital_id)
+    units = get_blood_units(hospital_id)
+    contracts = get_active_contracts()
+    contracts = [c for c in contracts if c['lending_hospital_id'] == hospital_id or c['borrowing_hospital_id'] == hospital_id]
+    
+    depts = {}
+    for w in workers:
+        d = w.get('department', 'Unknown')
+        depts[d] = depts.get(d, 0) + 1
+        
+    return {
+        "worker_count": len(workers),
+        "unit_count": len(units),
+        "active_contracts": len(contracts),
+        "departments": depts
     }
 
 def seed_mock_data():

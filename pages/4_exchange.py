@@ -12,6 +12,28 @@ if not st.session_state.get("logged_in"):
     st.warning("Please login from the main page.")
     st.stop()
 
+# Access Control
+role = st.session_state.get("user_role", "staff")
+if role not in ["super_admin", "hospital_admin"]:
+    st.markdown("""
+    <style>
+    .glass-card {
+        background: rgba(20,20,35,0.7);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 16px;
+        text-align: center;
+    }
+    </style>
+    <div class='glass-card' style='border-color:rgba(255,65,108,0.4);'>
+        <h2 style='color:white;'>🚫 Access Denied</h2>
+        <p style='color:#95A5A6;'>You do not have permission to view this page. Hospital Admin or Super Admin only.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
+
 from utils.sidebar import render_sidebar
 render_sidebar()
 

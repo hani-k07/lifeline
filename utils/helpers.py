@@ -74,3 +74,11 @@ def format_temp(temp: float) -> str:
 
 def generate_code(prefix: str, num: int) -> str:
     return f"{prefix}-{num:04d}"
+
+def check_access(required_role, current_role):
+    role_level = {
+        "super_admin": 3,
+        "hospital_admin": 2,
+        "staff": 1
+    }
+    return role_level.get(current_role, 0) >= role_level.get(required_role, 99)

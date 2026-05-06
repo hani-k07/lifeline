@@ -190,7 +190,9 @@ if not st.session_state["logged_in"]:
 
         if submitted:
             data = auth_login(email_in, pass_in)
-            if data:
+            if data == "DEACTIVATED":
+                st.error("Your account has been deactivated.")
+            elif data:
                 st.session_state.update({
                     "logged_in":   True,
                     "user_role":   data["role"],
@@ -198,6 +200,8 @@ if not st.session_state["logged_in"]:
                     "email":       email_in,
                     "full_name":   data.get("full_name","User"),
                     "user_id":     data.get("id",""),
+                    "department":  data.get("department", "Blood Bank"),
+                    "shift":       data.get("shift", "Morning"),
                 })
                 st.rerun()
             else:
