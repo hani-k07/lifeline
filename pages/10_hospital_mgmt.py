@@ -35,37 +35,8 @@ if role not in ["super_admin", "hospital_admin"]:
 st.set_page_config(page_title="Hospital Management - LIFELINE", layout="wide")
 render_sidebar()
 
-st.markdown("""
-<style>
-.section-header {
-    font-size:0.8rem; font-weight:600; color:#ff416c;
-    text-transform:uppercase; letter-spacing:2px;
-    margin-bottom:20px; padding-bottom:10px;
-    border-bottom:1px solid rgba(255,65,108,0.2);
-}
-.glass-card {
-    background: rgba(20,20,35,0.7);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 16px;
-}
-.metric-card {
-    background: rgba(20,20,35,0.8);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-left: 3px solid #ff416c;
-    border-radius: 12px;
-    padding: 18px 20px;
-}
-.metric-value {
-    font-size:1.8rem; font-weight:700;
-    background: linear-gradient(135deg,#ff416c,#ff4b2b);
-    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
-}
-.metric-label { font-size:0.7rem; color:#95A5A6; text-transform:uppercase; letter-spacing:1.5px; }
-</style>
-""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 # Hospital ID for current user
 hosp_id = st.session_state.get("hospital_id")

@@ -20,23 +20,8 @@ render_sidebar()
 role    = st.session_state.get("user_role")
 hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
 
-st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-html,body,[class*="css"]{font-family:'Outfit',sans-serif!important;}
-.stApp{background:linear-gradient(-45deg,#0f0c29,#302b63,#24243e,#1a1a2e);background-size:400% 400%;animation:gradientBG 15s ease infinite;}
-@keyframes gradientBG{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
-footer,#MainMenu{visibility:hidden;} [data-testid='stSidebarNav'] { display: none !important; } [data-testid='stHeader'] { background: transparent !important; } [data-testid='stHeaderActionElements'] { display: none !important; }
-.block-container{padding-top:1.5rem!important;}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#0D0D1A 0%,#1C1C2E 100%)!important;border-right:1px solid rgba(255,65,108,0.2);}
-[data-testid="stSidebar"] *{color:#ECF0F1!important;}
-.glass-card{background:rgba(20,20,35,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:24px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease;}
-.section-header{font-size:0.68rem;font-weight:600;color:#ff416c;text-transform:uppercase;letter-spacing:2px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid rgba(255,65,108,0.2);}
-.vital-box{background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:15px;text-align:center;}
-.vital-val{font-size:2rem;font-weight:700;color:white;}
-.vital-lbl{font-size:0.7rem;color:#95A5A6;text-transform:uppercase;}
-.stTextInput>div>div>input,.stSelectbox>div>div>div,.stNumberInput>div>div>input{background:rgba(0,0,0,0.3)!important;border:1px solid rgba(255,255,255,0.1)!important;color:white!important;border-radius:10px!important;}
-.stButton>button{background:linear-gradient(135deg,#ff416c,#ff4b2b)!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:600!important;box-shadow:0 4px 15px rgba(255,65,108,0.3)!important;}
-</style>""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 st.markdown("<h1 style='color:white;'><span style='color:#E74C3C;'>💉</span> Vitals Telemetry & Transfusion Monitor</h1>", unsafe_allow_html=True)
 

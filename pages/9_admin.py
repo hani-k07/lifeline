@@ -36,37 +36,8 @@ if role != "super_admin":
 st.set_page_config(page_title="Super Admin - LIFELINE", layout="wide")
 render_sidebar()
 
-st.markdown("""
-<style>
-.section-header {
-    font-size:0.8rem; font-weight:600; color:#ff416c;
-    text-transform:uppercase; letter-spacing:2px;
-    margin-bottom:20px; padding-bottom:10px;
-    border-bottom:1px solid rgba(255,65,108,0.2);
-}
-.glass-card {
-    background: rgba(20,20,35,0.7);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 16px;
-}
-.metric-card {
-    background: rgba(20,20,35,0.8);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-left: 3px solid #ff416c;
-    border-radius: 12px;
-    padding: 18px 20px;
-}
-.metric-value {
-    font-size:1.8rem; font-weight:700;
-    background: linear-gradient(135deg,#ff416c,#ff4b2b);
-    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
-}
-.metric-label { font-size:0.7rem; color:#95A5A6; text-transform:uppercase; letter-spacing:1.5px; }
-</style>
-""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 st.markdown("<h1 style='color:white;'>🛡️ Super Admin Control Panel</h1>", unsafe_allow_html=True)
 
@@ -78,15 +49,16 @@ inactive_workers = [w for w in all_workers if w['is_active'] == 0]
 
 # --- FEATURE E: OVERVIEW ---
 st.markdown("<div class='section-header'>NETWORK OVERVIEW</div>", unsafe_allow_html=True)
+total_hospitals = len(all_hospitals)
+total_workers = len(all_workers)
+active_count = len(active_workers)
+inactive_count = len(inactive_workers)
+
 col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.markdown(f"<div class='metric-card'><div class='metric-label'>Total Hospitals</div><div class='metric-value'>{len(all_hospitals)}</div></div>", unsafe_allow_html=True)
-with col2:
-    st.markdown(f"<div class='metric-card'><div class='metric-label'>Total Workers</div><div class='metric-value'>{len(all_workers)}</div></div>", unsafe_allow_html=True)
-with col3:
-    st.markdown(f"<div class='metric-card' style='border-left-color:#00D2AA;'><div class='metric-label'>Active Users</div><div class='metric-value'>{len(active_workers)}</div></div>", unsafe_allow_html=True)
-with col4:
-    st.markdown(f"<div class='metric-card' style='border-left-color:#95A5A6;'><div class='metric-label'>Inactive Users</div><div class='metric-value'>{len(inactive_workers)}</div></div>", unsafe_allow_html=True)
+col1.metric("🏥 Total Hospitals", total_hospitals)
+col2.metric("👥 Total Workers",   total_workers)
+col3.metric("✅ Active Users",    active_count)
+col4.metric("❌ Inactive Users",  inactive_count)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -151,39 +123,64 @@ st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
 st.markdown("<div class='section-header'>MANAGE HOSPITALS</div>", unsafe_allow_html=True)
 
 if all_hospitals:
-    for h in all_hospitals:
-        with st.expander(f"🏥 {h['name']} ({h['city']}) - {h['hospital_type']} | Status: {h['status']}"):
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.write(f"**Address:** {h['address']}")
-                st.write(f"**Contact:** {h['contact_number']}")
-                st.write(f"**Coordinates:** {h['lat']}, {h['lng']}")
-            
-            with col2:
-                if st.button("Edit Details", key=f"edit_h_{h['id']}"):
-                    st.session_state[f"editing_h_{h['id']}"] = True
+    # Header row
+    h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([3,2,2,2,3])
+    h_col1.markdown("**Hospital Name**")
+    h_col2.markdown("**City**")
+    h_col3.markdown("**Type**")
+    h_col4.markdown("**Status**")
+    h_col5.markdown("**Actions**")
+    st.markdown("<hr style='margin:10px 0; opacity:0.2'>", unsafe_allow_html=True)
+
+    for hosp in all_hospitals:
+        col_name, col_city, col_type, col_status, col_actions = st.columns([3,2,2,2,3])
+        col_name.write(hosp["name"])
+        col_city.write(hosp.get("city", "Lahore"))
+        col_type.write(hosp.get("hospital_type", "Public"))
+        
+        status_color = "#00D2AA" if hosp.get("status") == "active" else "#E74C3C"
+        col_status.markdown(f"<span style='color:{status_color}'>{hosp.get('status', 'active').title()}</span>", unsafe_allow_html=True)
+        
+        with col_actions:
+            if st.button("✏️ Edit", key=f"edit_{hosp['id']}"):
+                st.session_state[f"editing_{hosp['id']}"] = True
+        
+        # Edit expander (appears below row when Edit clicked)
+        if st.session_state.get(f"editing_{hosp['id']}", False):
+            with st.expander(f"Edit — {hosp['name']}", expanded=True):
+                new_address = st.text_input("Address", value=hosp.get("address", ""), key=f"addr_{hosp['id']}")
+                new_contact = st.text_input("Contact Number", value=hosp.get("contact_number", ""), key=f"contact_{hosp['id']}")
+                new_status = st.selectbox(
+                    "Status",
+                    options=["active", "inactive", "maintenance"],
+                    index=["active","inactive","maintenance"].index(hosp.get("status","active")),
+                    key=f"status_{hosp['id']}"
+                )
+                new_h_type = st.selectbox(
+                    "Hospital Type",
+                    options=["Public", "Private", "Teaching"],
+                    index=["Public", "Private", "Teaching"].index(hosp.get("hospital_type","Public")),
+                    key=f"type_{hosp['id']}"
+                )
                 
-                if h['status'] != 'inactive':
-                    if st.button("Deactivate", key=f"deact_h_{h['id']}"):
-                        update_hospital(h['id'], {'status': 'inactive'})
-                        add_audit_log("HOSPITAL_DEACTIVATED", st.session_state["email"], h['id'], "hospital", h['id'], h['name'])
+                save_col, cancel_col = st.columns(2)
+                if save_col.button("💾 Save", key=f"save_{hosp['id']}"):
+                    success = update_hospital(hosp["id"], {
+                        "address":        new_address,
+                        "contact_number": new_contact,
+                        "status":         new_status,
+                        "hospital_type":  new_h_type
+                    })
+                    if success:
+                        st.success(f"✓ {hosp['name']} updated")
+                        st.session_state[f"editing_{hosp['id']}"] = False
                         st.rerun()
-            
-            if st.session_state.get(f"editing_h_{h['id']}", False):
-                st.markdown("---")
-                with st.form(f"form_edit_{h['id']}"):
-                    new_addr = st.text_input("Address", value=h['address'])
-                    new_contact = st.text_input("Contact", value=h['contact_number'])
-                    new_status = st.selectbox("Status", ["active", "inactive", "maintenance"], 
-                                             index=["active", "inactive", "maintenance"].index(h['status']))
-                    if st.form_submit_button("SAVE CHANGES"):
-                        update_hospital(h['id'], {'address': new_addr, 'contact_number': new_contact, 'status': new_status})
-                        st.session_state[f"editing_h_{h['id']}"] = False
-                        st.success("Hospital updated")
-                        st.rerun()
-                    if st.form_submit_button("CANCEL"):
-                        st.session_state[f"editing_h_{h['id']}"] = False
-                        st.rerun()
+                    else:
+                        st.error("Update failed")
+                
+                if cancel_col.button("✖ Cancel", key=f"cancel_{hosp['id']}"):
+                    st.session_state[f"editing_{hosp['id']}"] = False
+                    st.rerun()
 else:
     st.info("No hospitals found.")
 st.markdown("</div>", unsafe_allow_html=True)
@@ -240,41 +237,52 @@ if f_search:
     filtered_workers = [w for w in filtered_workers if f_search.lower() in w['full_name'].lower()]
 
 if filtered_workers:
-    for w in filtered_workers:
-        bg_color = "rgba(41, 128, 185, 0.1)" if w['role'] == "hospital_admin" else "rgba(255,255,255,0.03)"
-        text_style = "text-decoration: line-through; color: #95A5A6;" if w['is_active'] == 0 else "color: white;"
+    # Header row
+    w_col1, w_col2, w_col3, w_col4, w_col5 = st.columns([2,3,2,2,3])
+    w_col1.markdown("**Full Name**")
+    w_col2.markdown("**Email**")
+    w_col3.markdown("**Role**")
+    w_col4.markdown("**Hospital**")
+    w_col5.markdown("**Actions**")
+    st.markdown("<hr style='margin:10px 0; opacity:0.2'>", unsafe_allow_html=True)
+
+    for worker in filtered_workers:
+        text_style = "text-decoration: line-through; color: #95A5A6;" if worker['is_active'] == 0 else "color: white;"
+        col_name, col_email, col_role, col_hosp, col_actions = st.columns([2,3,2,2,3])
         
-        with st.container():
-            st.markdown(f"""
-            <div style='background:{bg_color}; padding:10px; border-radius:8px; margin-bottom:5px; border:1px solid rgba(255,255,255,0.05);'>
-                <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <div style='{text_style}'>
-                        <strong>{w['full_name']}</strong> ({w['email']}) <br>
-                        <small>{w['role']} @ {w['hospital_name']}</small>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                current_roles = ["hospital_admin", "staff"]
-                new_r = st.selectbox("Change Role", current_roles, index=current_roles.index(w['role']), key=f"role_sel_{w['id']}")
-                if new_r != w['role']:
-                    update_user_role(w['id'], new_r)
+        col_name.markdown(f"<div style='{text_style}'>{worker['full_name']}</div>", unsafe_allow_html=True)
+        col_email.markdown(f"<div style='{text_style}'>{worker['email']}</div>", unsafe_allow_html=True)
+        
+        # Inline role change selectbox
+        with col_role:
+            current_role = worker.get("role", "staff")
+            new_role = st.selectbox(
+                "",
+                options=["staff", "hospital_admin"],
+                index=0 if current_role == "staff" else 1,
+                key=f"role_{worker['id']}",
+                label_visibility="collapsed"
+            )
+            if new_role != current_role:
+                if update_user_role(worker["id"], new_role):
+                    st.success(f"✓ Role updated to {new_role}")
                     st.rerun()
+        
+        col_hosp.write(worker.get("hospital_name", "—"))
+        
+        with col_actions:
+            ca1, ca2 = st.columns(2)
+            if ca1.button("🔑 Reset", key=f"reset_{worker['id']}", help="Reset password to lifeline123"):
+                reset_user_password(worker["id"], "lifeline123")
+                st.success("Reset to lifeline123")
             
-            if c2.button("Reset Password", key=f"reset_{w['id']}"):
-                reset_user_password(w['id'], "lifeline123")
-                st.success(f"Password reset to: lifeline123")
-                
-            if w['is_active'] == 1:
-                if c3.button("Deactivate", key=f"deact_u_{w['id']}"):
-                    deactivate_user(w['id'])
+            if worker['is_active'] == 1:
+                if ca2.button("🚫 Deactivate", key=f"deact_u_{worker['id']}"):
+                    deactivate_user(worker['id'])
                     st.rerun()
             else:
-                if c3.button("Reactivate", key=f"act_u_{w['id']}"):
-                    reactivate_user(w['id'])
+                if ca2.button("✅ Reactivate", key=f"act_u_{worker['id']}"):
+                    reactivate_user(worker['id'])
                     st.rerun()
 else:
     st.info("No workers found matching filters.")

@@ -9,15 +9,55 @@ DB_PATH = "lifeline.db"
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def add_missing_columns():
+    """Add new columns to existing tables without destroying data."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Get existing columns for users table
+    cursor.execute("PRAGMA table_info(users)")
+    user_cols = [row[1] for row in cursor.fetchall()]
+    
+    user_new_cols = {
+        "phone_number": "TEXT DEFAULT ''",
+        "employee_id":  "TEXT DEFAULT ''",
+        "department":   "TEXT DEFAULT 'Blood Bank'",
+        "shift":        "TEXT DEFAULT 'Morning'",
+        "is_active":    "INTEGER DEFAULT 1",
+    }
+    for col, definition in user_new_cols.items():
+        if col not in user_cols:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
+    
+    # Get existing columns for hospitals table
+    cursor.execute("PRAGMA table_info(hospitals)")
+    hosp_cols = [row[1] for row in cursor.fetchall()]
+    
+    hosp_new_cols = {
+        "hospital_type": "TEXT DEFAULT 'Public'",
+        "status":        "TEXT DEFAULT 'active'",
+    }
+    for col, definition in hosp_new_cols.items():
+        if col not in hosp_cols:
+            cursor.execute(f"ALTER TABLE hospitals ADD COLUMN {col} {definition}")
+    
+    conn.commit()
+    conn.close()
+    print("✓ Missing columns added safely")
+
 def setup():
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+    # DO NOT remove lifeline.db as it contains real data
+    # if os.path.exists(DB_PATH):
+    #     os.remove(DB_PATH)
+    
+    add_missing_columns()
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
+    # Re-verify tables exist (in case someone deleted the file manually)
     c.executescript("""
-    CREATE TABLE hospitals (
+    CREATE TABLE IF NOT EXISTS hospitals (
         id TEXT PRIMARY KEY, 
         name TEXT, 
         city TEXT,
@@ -28,7 +68,7 @@ def setup():
         hospital_type TEXT DEFAULT 'Public',
         status TEXT DEFAULT 'active'
     );
-    CREATE TABLE users (
+    CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY, 
         email TEXT UNIQUE,
         password TEXT, 
@@ -41,7 +81,7 @@ def setup():
         shift TEXT DEFAULT 'Morning',
         is_active INTEGER DEFAULT 1
     );
-    CREATE TABLE donors (
+    CREATE TABLE IF NOT EXISTS donors (
         id TEXT PRIMARY KEY, cnic TEXT UNIQUE,
         full_name TEXT, blood_group TEXT, age INTEGER,
         last_donation_date TEXT, on_blood_thinners INTEGER DEFAULT 0,
@@ -53,21 +93,21 @@ def setup():
         screening_malaria TEXT DEFAULT 'passed',
         created_at TEXT
     );
-    CREATE TABLE patients (
+    CREATE TABLE IF NOT EXISTS patients (
         id TEXT PRIMARY KEY, hospital_id TEXT,
         cnic TEXT, full_name TEXT, father_name TEXT,
         age INTEGER, gender TEXT, blood_group TEXT, mrn TEXT,
         ward TEXT, bed TEXT, opd_number TEXT, diagnosis TEXT,
         created_at TEXT
     );
-    CREATE TABLE blood_units (
+    CREATE TABLE IF NOT EXISTS blood_units (
         id TEXT PRIMARY KEY, hospital_id TEXT,
         donor_id TEXT, blood_group TEXT, component TEXT,
         volume_ml INTEGER, collection_date TEXT,
         expiry_date TEXT, storage_temperature REAL,
         status TEXT DEFAULT 'available'
     );
-    CREATE TABLE contracts (
+    CREATE TABLE IF NOT EXISTS contracts (
         id TEXT PRIMARY KEY, ticket_id TEXT UNIQUE,
         lending_hospital_id TEXT, borrowing_hospital_id TEXT,
         patient_id TEXT, blood_unit_id TEXT,
@@ -76,24 +116,24 @@ def setup():
         status TEXT DEFAULT 'active',
         is_exchange INTEGER DEFAULT 0, is_returned INTEGER DEFAULT 0
     );
-    CREATE TABLE exchange_offers (
+    CREATE TABLE IF NOT EXISTS exchange_offers (
         id TEXT PRIMARY KEY, offering_hospital_id TEXT,
         receiving_hospital_id TEXT, offered_blood_group TEXT,
         requested_blood_group TEXT, units INTEGER, status TEXT
     );
-    CREATE TABLE emergency_requests (
+    CREATE TABLE IF NOT EXISTS emergency_requests (
         id TEXT PRIMARY KEY, requesting_hospital_id TEXT,
         target_hospital_id TEXT, blood_group TEXT,
         component TEXT, units_required INTEGER,
         urgency_level TEXT, status TEXT, created_at TEXT
     );
-    CREATE TABLE audit_logs (
+    CREATE TABLE IF NOT EXISTS audit_logs (
         id TEXT PRIMARY KEY, action TEXT, actor_id TEXT,
         hospital_id TEXT, entity_type TEXT, entity_id TEXT,
         details TEXT, previous_hash TEXT, current_hash TEXT,
         created_at TEXT
     );
-    CREATE TABLE transfusion_records (
+    CREATE TABLE IF NOT EXISTS transfusion_records (
         id TEXT PRIMARY KEY, patient_id TEXT,
         unit_id TEXT, hospital_id TEXT,
         pre_bp_sys INTEGER, pre_bp_dia INTEGER,
@@ -104,101 +144,50 @@ def setup():
         action_taken TEXT, nurse_name TEXT,
         start_time TEXT, end_time TEXT
     );
-    CREATE TABLE notifications (
+    CREATE TABLE IF NOT EXISTS notifications (
         id TEXT PRIMARY KEY, hospital_id TEXT,
         type TEXT, title TEXT, message TEXT,
         is_read INTEGER DEFAULT 0, created_at TEXT
     );
     """)
 
-    # --- Hospitals ---
+    # --- Hospitals (Fixing coordinates) ---
     hospitals = [
-        (str(uuid.uuid4()), 'Mayo Hospital',      'Lahore', 'Hospital Road, Lahore',        '042-99211129', 31.5734, 74.3044, 'Public', 'active'),
-        (str(uuid.uuid4()), 'Shaukat Khanum',     'Lahore', '7A Block R-3, Johar Town',     '042-35905000', 31.4619, 74.2704, 'Private', 'active'),
-        (str(uuid.uuid4()), 'Services Hospital',  'Lahore', 'Jail Road, Lahore',             '042-99203402', 31.5497, 74.3436, 'Teaching', 'active'),
-        (str(uuid.uuid4()), 'Jinnah Hospital',    'Lahore', 'Jail Road, Lahore',             '042-99231400', 31.5204, 74.3587, 'Public', 'active'),
+        ('Mayo Hospital',      'Lahore', 'Hospital Road, Lahore',        '042-99211129', 31.5734, 74.3044, 'Public', 'active'),
+        ('Shaukat Khanum Memorial Cancer Hospital',     'Lahore', '7A Block R-3, Johar Town',     '042-35905000', 31.4619, 74.2704, 'Private', 'active'),
+        ('Services Hospital',  'Lahore', 'Jail Road, Lahore',             '042-99203402', 31.5497, 74.3436, 'Teaching', 'active'),
+        ('Jinnah Hospital',    'Lahore', 'Jail Road, Lahore',             '042-99231400', 31.5204, 74.3587, 'Public', 'active'),
     ]
-    c.executemany("INSERT INTO hospitals (id,name,city,address,contact_number,lat,lng,hospital_type,status) VALUES (?,?,?,?,?,?,?,?,?)", hospitals)
-    h1,h2,h3,h4 = [r[0] for r in hospitals]
+    
+    for h in hospitals:
+        # Update if exists, otherwise insert (using name as key for simplicity in seeding)
+        c.execute("SELECT id FROM hospitals WHERE name = ?", (h[0],))
+        row = c.fetchone()
+        if row:
+            c.execute("""UPDATE hospitals SET city=?, address=?, contact_number=?, lat=?, lng=?, hospital_type=?, status=? 
+                         WHERE id=?""", (h[1], h[2], h[3], h[4], h[5], h[6], h[7], row[0]))
+        else:
+            hid = str(uuid.uuid4())
+            c.execute("""INSERT INTO hospitals (id,name,city,address,contact_number,lat,lng,hospital_type,status) 
+                         VALUES (?,?,?,?,?,?,?,?,?)""", (hid, h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]))
 
-    # --- Users (sha256 hashed) ---
+    # --- Users ---
     pwd = hash_password("lifeline123")
-    users = [
-        # id, email, password, full_name, role, hospital_id, phone, emp_id, dept, shift, is_active
-        (str(uuid.uuid4()), 'admin@lifeline.com',    pwd, 'Super Admin',      'super_admin',    None, '0300-1234567', 'EMP-001', 'Admin', 'Morning', 1),
-        (str(uuid.uuid4()), 'mayo@lifeline.com',     pwd, 'Dr. Arif Hussain', 'hospital_admin', h1, '0300-1112223', 'EMP-101', 'Blood Bank', 'Morning', 1),
-        (str(uuid.uuid4()), 'services@lifeline.com', pwd, 'Dr. Sara Malik',   'hospital_admin', h3, '0300-4445556', 'EMP-301', 'Blood Bank', 'Morning', 1),
-        (str(uuid.uuid4()), 'staff@lifeline.com',    pwd, 'Nurse Aisha',      'staff',          h1, '0312-9876543', 'EMP-102', 'Lab', 'Morning', 1),
-        (str(uuid.uuid4()), 'hosp2@lifeline.com',    pwd, 'Dr. Kamran Ahmed', 'hospital_admin', h2, '0321-5556667', 'EMP-201', 'Blood Bank', 'Evening', 1),
-        (str(uuid.uuid4()), 'hosp4@lifeline.com',    pwd, 'Dr. Fatima Noor',  'hospital_admin', h4, '0333-8889990', 'EMP-401', 'Blood Bank', 'Night', 1),
-        (str(uuid.uuid4()), 'worker1@lifeline.com',  pwd, 'Ali Hassan',       'staff',          h3, '0345-0001112', 'EMP-302', 'Emergency', 'Night', 1),
+    # Using email as key to avoid duplicates
+    admin_users = [
+        ('admin@lifeline.com',    pwd, 'Super Admin',      'super_admin',    None, '0300-1234567', 'EMP-001', 'Admin', 'Morning', 1),
     ]
-    c.executemany("INSERT INTO users (id,email,password,full_name,role,hospital_id,phone_number,employee_id,department,shift,is_active) VALUES (?,?,?,?,?,?,?,?,?,?,?)", users)
-
-    # --- Donors ---
-    now_str = datetime.now().isoformat()
-    donors = [
-        (str(uuid.uuid4()), '35202-1111111-1', 'Muhammad Ali Khan',   'O+',  28, '2024-11-01', 0, 95, '',          'passed','passed','passed','passed','passed', now_str),
-        (str(uuid.uuid4()), '35202-2222222-2', 'Fahad Bilal',         'A+',  34, '2024-08-15', 0, 88, '',          'passed','passed','passed','passed','passed', now_str),
-        (str(uuid.uuid4()), '35202-3333333-3', 'Omar Tariq',          'B+',  45, '2024-06-20', 0, 72, 'Diabetes', 'passed','passed','passed','passed','passed', now_str),
-        (str(uuid.uuid4()), '35202-4444444-4', 'Zohaib Raza',         'AB+', 29, '2025-01-10', 0, 82, '',          'passed','passed','passed','passed','passed', now_str),
-        (str(uuid.uuid4()), '35202-5555555-5', 'Hassan Mehmood',      'O-',  55, '2023-12-01', 1, 58, 'Hypertension','passed','passed','passed','passed','passed',now_str),
-        (str(uuid.uuid4()), '35202-6666666-6', 'Salman Tariq',        'A-',  31, '2024-09-05', 0, 91, '',          'passed','passed','passed','passed','passed', now_str),
-        (str(uuid.uuid4()), '35202-7777777-7', 'Bilal Ahmed',         'B-',  40, '2024-07-18', 0, 65, 'Diabetes,Hypertension','passed','passed','passed','passed','passed',now_str),
-        (str(uuid.uuid4()), '35202-8888888-8', 'Kamran Akmal',        'AB-', 38, '2024-04-12', 0, 10, 'Hepatitis B','passed','failed','passed','passed','passed', now_str),
-    ]
-    c.executemany("""INSERT INTO donors (id,cnic,full_name,blood_group,age,last_donation_date,
-        on_blood_thinners,risk_score,diseases,screening_hiv,screening_hepb,screening_hepc,
-        screening_syphilis,screening_malaria,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", donors)
-    d1,d2,d3,d4,d5,d6,d7,d8 = [r[0] for r in donors]
-
-    # --- Patients ---
-    patients = [
-        (str(uuid.uuid4()), h4, '35202-6848357-8', 'Aamir Hussain', 'Usman Shah', 27, 'Male', 'A+', 'MRN-1000', 'Surgical', 'Bed-15', 'OPD-2000', 'Post-operative haemorrhage', now_str),
-        (str(uuid.uuid4()), h4, '35202-4266882-1', 'Farhan Qureshi', 'Rizwan Hussain', 42, 'Male', 'O+', 'MRN-1001', 'Orthopaedics', 'Bed-14', 'OPD-2001', 'Gastrointestinal bleeding', now_str),
-        (str(uuid.uuid4()), h1, '35202-6985053-8', 'Kamran Shah', 'Rehan Ahmed', 64, 'Male', 'AB+', 'MRN-1002', 'General', 'Bed-19', 'OPD-2002', 'Road traffic accident', now_str),
-        (str(uuid.uuid4()), h4, '35202-9056363-8', 'Imran Ahmed', 'Kamran Khan', 60, 'Male', 'A+', 'MRN-1003', 'ICU', 'Bed-1', 'OPD-2003', 'Post-operative haemorrhage', now_str),
-        (str(uuid.uuid4()), h1, '35202-6445965-7', 'Ali Iqbal', 'Hassan Mirza', 41, 'Male', 'O+', 'MRN-1004', 'Orthopaedics', 'Bed-13', 'OPD-2004', 'Severe anaemia', now_str),
-        (str(uuid.uuid4()), h3, '35202-8779638-5', 'Faisal Qureshi', 'Omar Chaudhry', 36, 'Male', 'AB-', 'MRN-1005', 'General', 'Bed-5', 'OPD-2005', 'Burn trauma', now_str),
-    ]
-    c.executemany("""INSERT INTO patients (id,hospital_id,cnic,full_name,father_name,age,gender,
-        blood_group,mrn,ward,bed,opd_number,diagnosis,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", patients)
-    p1,p2,p3,p4,p5,p6 = [r[0] for r in patients[:6]]
-
-    # --- Blood Units (20 total) ---
-    today = datetime.now().date()
-    units_data = [
-        (str(uuid.uuid4()), h1, d1, 'O+',  'Whole Blood', 450, '2026-04-01', str(today + timedelta(days=2)),  4.0),
-        (str(uuid.uuid4()), h2, d2, 'A+',  'RBC',         300, '2026-04-05', str(today + timedelta(days=2)),  4.0),
-        (str(uuid.uuid4()), h3, d3, 'B+',  'Platelets',   200, '2026-04-08', str(today + timedelta(days=1)),  22.0),
-        (str(uuid.uuid4()), h1, d4, 'AB+', 'Plasma',      250, '2026-04-10', str(today + timedelta(days=4)),  -20.0),
-        (str(uuid.uuid4()), h2, d5, 'O-',  'Whole Blood', 450, '2026-04-12', str(today + timedelta(days=5)),  4.0),
-    ]
-    c.executemany("""INSERT INTO blood_units (id,hospital_id,donor_id,blood_group,component,
-        volume_ml,collection_date,expiry_date,storage_temperature) VALUES (?,?,?,?,?,?,?,?,?)""", units_data)
-    u_ids = [r[0] for r in units_data]
-
-    # --- Contracts ---
-    now = datetime.now()
-    contracts_data = [
-        (str(uuid.uuid4()), 'LF-2026-0001', h2, h1, p1, u_ids[0],  'O+',  'Whole Blood', 2,
-         (now - timedelta(hours=20)).isoformat(), (now + timedelta(hours=4)).isoformat(),  'active', 0, 0),
-    ]
-    c.executemany("""INSERT INTO contracts (id,ticket_id,lending_hospital_id,borrowing_hospital_id,
-        patient_id,blood_unit_id,blood_group,component,units,issue_time,return_deadline,status,is_exchange,is_returned)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", contracts_data)
-
-    # --- Audit Logs ---
-    logs = [
-        (str(uuid.uuid4()), 'SYSTEM_INIT',     'system',          None, 'system',   'db',     '{"msg":"Database initialized"}', 'genesis','hash0', now.isoformat()),
-    ]
-    c.executemany("""INSERT INTO audit_logs (id,action,actor_id,hospital_id,entity_type,entity_id,
-        details,previous_hash,current_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""", logs)
+    for u in admin_users:
+        c.execute("SELECT id FROM users WHERE email = ?", (u[0],))
+        if not c.fetchone():
+            uid = str(uuid.uuid4())
+            c.execute("""INSERT INTO users (id,email,password,full_name,role,hospital_id,phone_number,employee_id,department,shift,is_active) 
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (uid, u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9]))
 
     conn.commit()
     conn.close()
     print("=" * 50)
-    print(" LIFELINE Database Initialized Successfully!")
+    print(" LIFELINE Database Updated Successfully!")
     print("=" * 50)
 
 if __name__ == "__main__":

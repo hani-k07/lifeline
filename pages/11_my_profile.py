@@ -10,26 +10,8 @@ if not st.session_state.get("logged_in"):
 st.set_page_config(page_title="My Profile - LIFELINE", layout="wide")
 render_sidebar()
 
-st.markdown("""
-<style>
-.section-header {
-    font-size:0.8rem; font-weight:600; color:#ff416c;
-    text-transform:uppercase; letter-spacing:2px;
-    margin-bottom:20px; padding-bottom:10px;
-    border-bottom:1px solid rgba(255,65,108,0.2);
-}
-.glass-card {
-    background: rgba(20,20,35,0.7);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 16px;
-}
-.profile-label { color:#95A5A6; font-size:0.8rem; text-transform:uppercase; margin-bottom:2px; }
-.profile-value { color:white; font-size:1.1rem; font-weight:600; margin-bottom:15px; }
-</style>
-""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 st.markdown("<h1 style='color:white;'>👤 My Profile</h1>", unsafe_allow_html=True)
 
@@ -39,6 +21,8 @@ email = st.session_state.get("email")
 role = st.session_state.get("user_role")
 hosp_id = st.session_state.get("hospital_id")
 fullname = st.session_state.get("full_name")
+department = st.session_state.get("department", "Blood Bank")
+shift = st.session_state.get("shift", "Morning")
 
 hospital_name = "System Wide"
 if hosp_id:
@@ -46,34 +30,31 @@ if hosp_id:
     hospital_name = hosp.get('name', 'Unknown')
 
 # --- FEATURE A: VIEW MY PROFILE ---
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>ACCOUNT INFORMATION</div>", unsafe_allow_html=True)
-
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("<div class='profile-label'>Full Name</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{fullname}</div>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='profile-label'>Email Address</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{email}</div>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='profile-label'>Assigned Hospital</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{hospital_name}</div>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='profile-label'>Department</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{st.session_state.get('department', 'Blood Bank')}</div>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='profile-label'>Shift</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{st.session_state.get('shift', 'Morning')}</div>", unsafe_allow_html=True)
-
-with col2:
-    st.markdown("<div class='profile-label'>Network Role</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{role.replace('_', ' ').title()}</div>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='profile-label'>User ID</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='profile-value'>{user_id}</div>", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)
+st.markdown(f"""
+<div class="glass-card">
+  <h2 style="margin:0 0 4px; color:white;">{fullname}</h2>
+  <p style="color:#95A5A6;margin:0 0 16px">{email}</p>
+  
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div>
+      <span style="color:#95A5A6;font-size:0.8rem">ROLE</span>
+      <p style="margin:2px 0;font-weight:600; color:white;">{role.replace('_',' ').title()}</p>
+    </div>
+    <div>
+      <span style="color:#95A5A6;font-size:0.8rem">HOSPITAL</span>
+      <p style="margin:2px 0;font-weight:600; color:white;">{hospital_name}</p>
+    </div>
+    <div>
+      <span style="color:#95A5A6;font-size:0.8rem">DEPARTMENT</span>
+      <p style="margin:2px 0;font-weight:600; color:white;">{department}</p>
+    </div>
+    <div>
+      <span style="color:#95A5A6;font-size:0.8rem">SHIFT</span>
+      <p style="margin:2px 0;font-weight:600; color:white;">{shift}</p>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # --- FEATURE B: CHANGE MY PASSWORD ---
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)

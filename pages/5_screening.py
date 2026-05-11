@@ -20,30 +20,8 @@ render_sidebar()
 role    = st.session_state.get("user_role")
 hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
 
-st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-html,body,[class*="css"]{font-family:'Outfit',sans-serif!important;}
-.stApp{background:linear-gradient(-45deg,#0f0c29,#302b63,#24243e,#1a1a2e);background-size:400% 400%;animation:gradientBG 15s ease infinite;}
-@keyframes gradientBG{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
-footer,#MainMenu{visibility:hidden;} [data-testid='stSidebarNav'] { display: none !important; } [data-testid='stHeader'] { background: transparent !important; } [data-testid='stHeaderActionElements'] { display: none !important; }
-.block-container{padding-top:1.5rem!important;}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#0D0D1A 0%,#1C1C2E 100%)!important;border-right:1px solid rgba(255,65,108,0.2);}
-[data-testid="stSidebar"] *{color:#ECF0F1!important;}
-.glass-card{background:rgba(20,20,35,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:24px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease;}
-.metric-card{background:rgba(20,20,35,0.8);border:1px solid rgba(255,255,255,0.06);border-left:3px solid #ff416c;border-radius:12px;padding:18px 20px;}
-.metric-value{font-size:2rem;font-weight:700;background:linear-gradient(135deg,#ff416c,#ff4b2b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1.1;}
-.metric-label{font-size:0.72rem;color:#95A5A6;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;}
-.section-header{font-size:0.68rem;font-weight:600;color:#ff416c;text-transform:uppercase;letter-spacing:2px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid rgba(255,65,108,0.2);}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.7rem;font-weight:600;}
-.badge-safe{background:rgba(0,210,170,0.15);color:#00D2AA;border:1px solid rgba(0,210,170,0.3);}
-.badge-caution{background:rgba(255,179,71,0.15);color:#FFB347;border:1px solid rgba(255,179,71,0.3);}
-.badge-critical{background:rgba(255,65,108,0.15);color:#ff416c;border:1px solid rgba(255,65,108,0.3);}
-.stTextInput>div>div>input,.stSelectbox>div>div>div,.stNumberInput>div>div>input,.stDateInput>div>div>input{background:rgba(0,0,0,0.3)!important;border:1px solid rgba(255,255,255,0.1)!important;color:white!important;border-radius:10px!important;}
-.stButton>button{background:linear-gradient(135deg,#ff416c,#ff4b2b)!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:600!important;box-shadow:0 4px 15px rgba(255,65,108,0.3)!important;}
-.data-table{width:100%;border-collapse:collapse;}
-.data-table th{background:rgba(255,65,108,0.1);color:#ff416c;font-size:0.68rem;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:left;border-bottom:1px solid rgba(255,65,108,0.2);}
-.data-table td{padding:10px 14px;color:#ECF0F1;font-size:0.85rem;border-bottom:1px solid rgba(255,255,255,0.03);}
-</style>""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 st.markdown("<h1 style='color:white;'><span style='color:#00D2AA;'>🔬</span> Medical Screening Laboratory</h1>", unsafe_allow_html=True)
 

@@ -13,10 +13,11 @@ def render_sidebar():
     user_id  = st.session_state.get("user_id")
 
     # Check for deactivation
-    from utils.supabase_client import _q
-    user_data = _q("SELECT is_active FROM users WHERE id=?", (user_id,))
-    if user_data and user_data[0]['is_active'] == 0:
+    from utils.supabase_client import get_user_by_id
+    user_data = get_user_by_id(user_id)
+    if user_data and user_data.get('is_active', 1) == 0:
         st.sidebar.error("🚨 ACCOUNT DEACTIVATED")
+        st.sidebar.warning("⛔ Your account has been deactivated.")
         if st.sidebar.button("LOGOUT NOW"):
             st.session_state.clear()
             st.rerun()
@@ -31,16 +32,33 @@ def render_sidebar():
         st.markdown("<hr style='border-color:rgba(255,65,108,0.2); margin:8px 0;'>", unsafe_allow_html=True)
 
         initials = fullname[0].upper() if fullname else "U"
-        role_label = {"super_admin":"Super Admin","hospital_admin":"Hospital Admin","staff":"Staff"}.get(role, role)
-        role_badge_class = {"super_admin":"badge-critical","hospital_admin":"badge-info","staff":"badge-caution"}.get(role,"badge-info")
+        
+        # Role Badge
+        badge_colors = {
+            "super_admin":    "#F39C12",
+            "hospital_admin": "#2980B9",
+            "staff":          "#00D2AA",
+        }
+        badge_color = badge_colors.get(role, "#00D2AA")
+        role_label  = role.replace("_", " ").title()
+
         st.markdown(f"""
-        <div style='display:flex; align-items:center; gap:10px; padding:10px 0;'>
-            <div style='width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#ff416c,#ff4b2b);
-                        display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;
-                        color:white;flex-shrink:0;'>{initials}</div>
+        <div style='display:flex; align-items:center; gap:12px; padding:10px 0;'>
+            <div style='width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#ff416c,#ff4b2b);
+                        display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.1rem;
+                        color:white;flex-shrink:0;box-shadow:0 4px 12px rgba(255,65,108,0.3);'>{initials}</div>
             <div>
-                <div style='color:white;font-weight:600;font-size:0.9rem;'>{fullname}</div>
-                <span class='badge {role_badge_class}'>{role_label}</span>
+                <div style='color:white;font-weight:600;font-size:0.95rem;'>{fullname}</div>
+                <div style='
+                    display:inline-block;
+                    background:{badge_color};
+                    color:#fff;
+                    padding:2px 10px;
+                    border-radius:12px;
+                    font-size:0.75rem;
+                    font-weight:600;
+                    margin-top:4px;
+                '>{role_label}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)

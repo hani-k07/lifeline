@@ -195,7 +195,7 @@ def add_hospital(hospital: dict) -> str:
     return new_id if ok else ""
 
 def update_hospital(hospital_id, fields: dict) -> bool:
-    allowed = ['address', 'contact_number', 'status']
+    allowed = ['address', 'contact_number', 'status', 'hospital_type']
     updates = []
     params = []
     for k, v in fields.items():
@@ -212,6 +212,15 @@ def update_hospital(hospital_id, fields: dict) -> bool:
 # ─────────────────────────────────────────────
 # WORKERS / USERS
 # ─────────────────────────────────────────────
+
+def get_user_by_id(user_id):
+    """Fetch a single user by their id. Returns dict or None."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 def get_all_users():
     sql = """SELECT u.*, h.name as hospital_name 

@@ -13,34 +13,40 @@ if not st.session_state.get("logged_in"):
     st.warning("Please login from the main page.")
     st.stop()
 
+import datetime
 from utils.sidebar import render_sidebar
 render_sidebar()
 
+def get_contract_time_status(end_date_str):
+    """
+    Given an end_date string (ISO format), return:
+      - days_remaining (int)
+      - status_label (str): "EXPIRED", "CRITICAL", "WARNING", "OK"
+      - color (str): hex color for display
+    """
+    try:
+        end_date = datetime.datetime.fromisoformat(end_date_str)
+    except:
+        return None, "UNKNOWN", "#95A5A6"
+    
+    now  = datetime.datetime.now()
+    diff = end_date - now
+    days = diff.days
+    
+    if days < 0:
+        return days, "EXPIRED",  "#E74C3C"
+    elif days <= 1:
+        return days, "CRITICAL", "#E74C3C"
+    elif days <= 3:
+        return days, "WARNING",  "#F39C12"
+    else:
+        return days, "OK",       "#00D2AA"
 
 role    = st.session_state.get("user_role")
 hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
 
-st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-html,body,[class*="css"]{font-family:'Outfit',sans-serif!important;}
-.stApp{background:linear-gradient(-45deg,#0f0c29,#302b63,#24243e,#1a1a2e);background-size:400% 400%;animation:gradientBG 15s ease infinite;}
-@keyframes gradientBG{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
-footer,#MainMenu{visibility:hidden;} [data-testid='stSidebarNav'] { display: none !important; } [data-testid='stHeader'] { background: transparent !important; } [data-testid='stHeaderActionElements'] { display: none !important; }
-.block-container{padding-top:1.5rem!important;}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#0D0D1A 0%,#1C1C2E 100%)!important;border-right:1px solid rgba(255,65,108,0.2);}
-[data-testid="stSidebar"] *{color:#ECF0F1!important;}
-.glass-card{background:rgba(20,20,35,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:24px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease;}
-.section-header{font-size:0.68rem;font-weight:600;color:#ff416c;text-transform:uppercase;letter-spacing:2px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid rgba(255,65,108,0.2);}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.7rem;font-weight:600;}
-.countdown{font-family:'Courier New',monospace;font-size:1.6rem;font-weight:700;letter-spacing:3px;}
-.countdown-red{color:#ff416c;text-shadow:0 0 10px rgba(255,65,108,0.5);}
-.countdown-amber{color:#FFB347;text-shadow:0 0 10px rgba(255,179,71,0.5);}
-.countdown-green{color:#00D2AA;text-shadow:0 0 10px rgba(0,210,170,0.5);}
-.alert-critical{background:linear-gradient(90deg,rgba(255,65,108,0.15),transparent);border-left:3px solid #ff416c;border-radius:0 8px 8px 0;padding:15px;margin-bottom:16px;color:#ECF0F1;}
-.stButton>button{background:linear-gradient(135deg,#ff416c,#ff4b2b)!important;color:white!important;border:none!important;border-radius:8px!important;font-weight:600!important;transition:all 0.3s ease!important;padding:4px 12px!important;}
-.stButton>button:hover{transform:translateY(-2px)!important;box-shadow:0 4px 15px rgba(255,65,108,0.5)!important;}
-.stProgress>div>div{background:linear-gradient(90deg,#ff416c,#ff4b2b)!important;}
-</style>""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 st.markdown("<h1 style='color:white;'><span style='color:#9B59B6;'>📄</span> Contract Management</h1>", unsafe_allow_html=True)
 
@@ -80,7 +86,35 @@ if sorted_c:
         tid = c.get("ticket_id")
         hrs = c.get("hours_remaining", 99)
         secs= c.get("seconds_remaining", 0)
+        deadline = c.get("return_deadline", "")
         
+        # New Status Badge Logic
+        days_rem, status_lbl, status_color = get_contract_time_status(deadline)
+        if days_rem is not None:
+            if days_rem < 0:
+                badge_label = f"⛔ Expired {abs(days_rem)} days ago"
+            elif days_rem == 0:
+                badge_label = "⚠️ Expires TODAY"
+            else:
+                badge_label = f"⏳ {days_rem} days remaining"
+            
+            badge_html = f"""
+            <div style='
+                background:rgba({{"EXPIRED":"231,76,60","CRITICAL":"231,76,60",
+                                  "WARNING":"243,156,18","OK":"0,210,170"}}.get(status_lbl,"149,165,166"),0.15);
+                border:1px solid {status_color};
+                border-radius:8px;
+                padding:4px 10px;
+                display:inline-block;
+                color:{status_color};
+                font-size:0.75rem;
+                font-weight:600;
+                margin-top:8px;
+            '>{badge_label}</div>
+            """
+        else:
+            badge_html = ""
+
         border = "#ff416c" if hrs < 6 else ("#FFB347" if hrs < 12 else "#00D2AA")
         cd_cls = "countdown-red" if hrs < 6 else ("countdown-amber" if hrs < 12 else "countdown-green")
         prog   = max(0, min(100, ((24 - hrs) / 24) * 100))
@@ -90,6 +124,7 @@ if sorted_c:
                 <div style='flex:1;'>
                     <code style='color:white;font-size:1.2rem;background:rgba(255,255,255,0.1);padding:4px 8px;border-radius:4px;'>{tid}</code>
                     <span style='margin-left:15px;color:#95A5A6;'>{c.get('lending_hospital_name')} ➔ {c.get('borrowing_hospital_name')}</span>
+                    <br>{badge_html}
                 </div>
                 <div style='flex:1;text-align:center;'>
                     <b style='color:white;font-size:1.1rem;'>{c.get('blood_group')} {c.get('component')}</b> ({c.get('units')} Units)

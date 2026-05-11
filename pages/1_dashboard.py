@@ -14,6 +14,9 @@ from utils.supabase_client import (
 from utils.dsa_bridge import fefo_sort, get_hospital_graph
 from utils.helpers import format_countdown, time_ago, get_status_color, pakistan_time
 from utils.pdf_generator import generate_shift_report
+from streamlit_autorefresh import st_autorefresh
+
+st_autorefresh(interval=1000, key="clock_refresh")
 
 if not st.session_state.get("logged_in"):
     st.warning("Please login from the main page.")
@@ -28,42 +31,22 @@ hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
 email   = st.session_state.get("email","")
 
 # ── MASTER CSS ──────────────────────────────────
-st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap');
-html,body,[class*="css"]{font-family:'Outfit',sans-serif!important;}
-.stApp{background:linear-gradient(-45deg,#0f0c29,#302b63,#24243e,#1a1a2e);background-size:400% 400%;animation:gradientBG 15s ease infinite;}
-@keyframes gradientBG{0%{background-position:0% 50%;}50%{background-position:100% 50%;}100%{background-position:0% 50%;}}
-footer,#MainMenu{visibility:hidden;} [data-testid='stSidebarNav'] { display: none !important; } [data-testid='stHeader'] { background: transparent !important; } [data-testid='stHeaderActionElements'] { display: none !important; }
-.block-container{padding-top:1.5rem!important;}
-.glass-card{background:rgba(20,20,35,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease;}
-.glass-card:hover{border-color:rgba(255,65,108,0.3);transform:translateY(-3px);box-shadow:0 12px 40px rgba(255,65,108,0.1);}
-.metric-card{background:rgba(20,20,35,0.8);border:1px solid rgba(255,255,255,0.06);border-left:3px solid #ff416c;border-radius:12px;padding:18px 20px;transition:all 0.3s ease;}
-.metric-value{font-size:2rem;font-weight:700;background:linear-gradient(135deg,#ff416c,#ff4b2b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1.1;}
-.metric-label{font-size:0.72rem;color:#95A5A6;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;}
-.section-header{font-size:0.68rem;font-weight:600;color:#ff416c;text-transform:uppercase;letter-spacing:2px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid rgba(255,65,108,0.2);}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.7rem;font-weight:600;}
-.badge-safe{background:rgba(0,210,170,0.15);color:#00D2AA;border:1px solid rgba(0,210,170,0.3);}
-.badge-caution{background:rgba(255,179,71,0.15);color:#FFB347;border:1px solid rgba(255,179,71,0.3);}
-.badge-critical{background:rgba(255,65,108,0.15);color:#ff416c;border:1px solid rgba(255,65,108,0.3);}
-.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#00D2AA;animation:pulse-anim 2s infinite;margin-right:6px;}
-.live-dot-red{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff416c;animation:pulse-red 1s infinite;margin-right:6px;}
-@keyframes pulse-anim{0%,100%{box-shadow:0 0 0 0 rgba(0,210,170,0.4);}50%{box-shadow:0 0 0 8px rgba(0,210,170,0);}}
-@keyframes pulse-red{0%,100%{box-shadow:0 0 0 0 rgba(255,65,108,0.4);}50%{box-shadow:0 0 0 8px rgba(255,65,108,0);}}
-.alert-critical{background:linear-gradient(90deg,rgba(255,65,108,0.15),transparent);border-left:3px solid #ff416c;border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:8px;color:#ECF0F1;font-size:0.9rem;}
-.alert-warning{background:linear-gradient(90deg,rgba(255,179,71,0.15),transparent);border-left:3px solid #FFB347;border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:8px;color:#ECF0F1;font-size:0.9rem;}
-.data-table{width:100%;border-collapse:collapse;}
-.data-table th{background:rgba(255,65,108,0.1);color:#ff416c;font-size:0.68rem;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:left;border-bottom:1px solid rgba(255,65,108,0.2);}
-.data-table td{padding:10px 14px;color:#ECF0F1;font-size:0.85rem;border-bottom:1px solid rgba(255,255,255,0.03);}
-.data-table tr:hover td{background:rgba(255,65,108,0.04);}
-.countdown{font-family:'Courier New',monospace;font-size:1.3rem;font-weight:700;letter-spacing:3px;}
-.countdown-red{color:#ff416c;text-shadow:0 0 10px rgba(255,65,108,0.5);}
-.countdown-amber{color:#FFB347;text-shadow:0 0 10px rgba(255,179,71,0.5);}
-.countdown-green{color:#00D2AA;text-shadow:0 0 10px rgba(0,210,170,0.5);}
-.stButton>button{background:linear-gradient(135deg,#ff416c,#ff4b2b)!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:600!important;transition:all 0.3s ease!important;box-shadow:0 4px 15px rgba(255,65,108,0.3)!important;}
-.stButton>button:hover{transform:translateY(-2px)!important;box-shadow:0 8px 25px rgba(255,65,108,0.5)!important;}
-</style>""", unsafe_allow_html=True)
+from utils.styles import get_glass_css
+st.markdown(get_glass_css(), unsafe_allow_html=True)
 
 # ── PAGE HEADER ─────────────────────────────────
+clock_placeholder = st.empty()
+current_time = datetime.now().strftime("%A, %d %B %Y — %H:%M:%S")
+clock_placeholder.markdown(f"""
+<div style='
+    text-align:right;
+    color:#95A5A6;
+    font-size:0.85rem;
+    font-family:monospace;
+    padding:4px 0;
+'>🕐 {current_time}</div>
+""", unsafe_allow_html=True)
+
 st.markdown(f"""<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
   <div>
     <h1 style="margin:0;font-size:2rem;color:white;">
