@@ -68,7 +68,7 @@ if submitted:
         }
         pid = add_patient(patient_data)
         
-        with st.spinner("Executing Dijkstra's Algorithm for Shortest Path Network Routing..."):
+        with st.spinner("Finding optimal route across the hospital network..."):
             hosp_nodes, edges = get_hospital_graph()
             # Mock available hospitals for demo
             avail = [h["id"] for h in hosp_nodes if h["id"] != hosp_id]
@@ -120,7 +120,7 @@ if st.session_state.dijkstra_result:
             for b in res.get("backups", [])[:2]:
                 st.markdown(f"• {h_map.get(b, b)}")
 
-        st.info("Dijkstra: O((V+E) log V)\nBFS Backup: O(V+E)\nNetwork: 4 nodes, 6 edges")
+        st.info(f"Network: {len(hosp_nodes)} nodes, {len(edges)} edges")
         
     with c2:
         hosp_nodes, edges = get_hospital_graph()

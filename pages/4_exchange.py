@@ -85,7 +85,7 @@ if submitted:
         # Filter out own offers
         others_pending = [o for o in all_pending if o.get("offering_hospital_id") != hosp_id]
         
-        with st.spinner("Searching Network HashMap for Complementary Offer..."):
+        with st.spinner("Searching network for complementary offer..."):
             match_res = find_exchange_match(new_offer, others_pending)
             time.sleep(1)
             
@@ -131,7 +131,6 @@ if submitted:
                 st.info("Offer posted to marketplace. Awaiting network match.")
 
 st.markdown("</div>", unsafe_allow_html=True)
-st.markdown("<p style='color:#95A5A6;font-size:0.75rem;'>DSA NOTE: HashMap O(1) matching instantly checks for complementary A/B needs across the active network pool.</p>", unsafe_allow_html=True)
 
 # ── MARKETPLACE BOARD ───────────────────────────
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)

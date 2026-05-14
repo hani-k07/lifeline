@@ -1,413 +1,564 @@
-// BUILD: mkdir build && cd build
-//        cmake .. && cmake --build .
-//        Copy dsa_engine(.exe) to project root
-
 #include <iostream>
-#include <string>
 #include <vector>
 #include <queue>
 #include <unordered_map>
-#include <map>
+#include <string>
+#include <memory>
+#include <limits>
 #include <algorithm>
-#include <climits>
-#include "json.hpp"
+#include <functional>
+#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 using namespace std;
 
-// ============================================================================
-// 1. OPERATION: fefo_sort (Min-Heap Priority Queue)
-// ============================================================================
+// ==========================================
+// 1. Dijkstra’s Algorithm (Graphs)
+// ==========================================
+
 /*
- * DSA: MIN-HEAP (Priority Queue)
- * Why: Blood units sorted by expiry. Soonest expiring = top.
- * This is FEFO: First Expire First Out.
- * Insert: O(log n) | Get minimum: O(1)
+ * Algorithm: Dijkstra's Shortest Path
+ * 
+ * Time Complexity: O((V + E) log V)
+ *   where V is the number of vertices (hospitals) and E is the number of edges (connections).
+ *   The priority queue operations take logarithmic time.
+ * Space Complexity: O(V + E)
+ *   for storing the adjacency list graph and O(V) for distances and the priority queue.
  */
-struct BloodUnit {
-    string id;
-    string group;
-    string expiry;
-    json original_data;
-
-    // We want the smallest date at the top, so we reverse the < operator for priority_queue
-    bool operator>(const BloodUnit& other) const {
-        return expiry > other.expiry; 
-    }
-};
-
-string handle_fefo(const json& data) {
-    priority_queue<BloodUnit, vector<BloodUnit>, greater<BloodUnit>> min_heap;
-    
-    for (auto& u : data["units"]) {
-        min_heap.push({u["id"], u["blood_group"], u["expiry_date"], u});
-    }
-    
-    json result = json::object();
-    json sorted_array = json::array();
-    
-    while (!min_heap.empty()) {
-        sorted_array.push_back(min_heap.top().original_data);
-        min_heap.pop();
-    }
-    
-    result["sorted_units"] = sorted_array;
-    return result.dump();
-}
-
-// ============================================================================
-// 2. OPERATION: dijkstra (Weighted Graph)
-// ============================================================================
-/*
- * DSA: WEIGHTED GRAPH + DIJKSTRA'S ALGORITHM
- * Graph: hospitals=nodes, roads=edges, distance=weight
- * Dijkstra finds shortest path to nearest hospital with blood.
- * Time: O((V+E) log V) using priority queue
- */
-string handle_dijkstra(const json& data) {
-    string source = data["source_id"];
-    vector<string> available = data["available_hospitals"].get<vector<string>>();
-    
-    unordered_map<string, vector<pair<string, float>>> adj;
-    for (auto& edge : data["edges"]) {
-        string u = edge["from_id"];
-        string v = edge["to_id"];
-        float w = edge["distance_km"];
-        adj[u].push_back({v, w});
-        adj[v].push_back({u, w}); // undirected
+json findShortestPath(const json& graphData, const string& startNode, const string& targetNode) {
+    // Build adjacency list
+    unordered_map<string, vector<pair<string, int>>> adjList;
+    for (const auto& edge : graphData) {
+        string u = edge["source"];
+        string v = edge["target"];
+        int weight = edge["weight"];
+        adjList[u].push_back({v, weight});
+        adjList[v].push_back({u, weight}); // Assuming undirected graph for roads
     }
 
-    unordered_map<string, float> dist;
-    unordered_map<string, string> prev;
-    for (auto& h : data["hospitals"]) dist[h["id"]] = 1e9;
-    dist[source] = 0;
+    // Min-heap for Dijkstra: pair<distance, node>
+    priority_queue<pair<int, string>, vector<pair<int, string>>, greater<pair<int, string>>> pq;
+    unordered_map<string, int> distances;
+    unordered_map<string, string> previous;
 
-    priority_queue<pair<float, string>, vector<pair<float, string>>, greater<pair<float, string>>> pq;
-    pq.push({0.0, source});
+    // Initialize distances to infinity
+    for (const auto& pair : adjList) {
+        distances[pair.first] = numeric_limits<int>::max();
+    }
+    
+    distances[startNode] = 0;
+    pq.push({0, startNode});
 
     while (!pq.empty()) {
-        float d = pq.top().first;
-        string u = pq.top().second;
+        auto [currentDist, u] = pq.top();
         pq.pop();
 
-        if (d > dist[u]) continue;
+        if (currentDist > distances[u]) continue;
 
-        for (auto& edge : adj[u]) {
-            string v = edge.first;
-            float weight = edge.second;
-            if (dist[u] + weight < dist[v]) {
-                dist[v] = dist[u] + weight;
-                prev[v] = u;
-                pq.push({dist[v], v});
+        if (u == targetNode) break;
+
+        for (const auto& neighbor : adjList[u]) {
+            string v = neighbor.first;
+            int weight = neighbor.second;
+
+            // Compute potential new distance
+            int newDist = distances[u] + weight;
+            
+            // If v is not in distances, it defaults to 0 without initialization,
+            // so we must ensure it's initialized to infinity if not visited
+            if (distances.find(v) == distances.end()) {
+                distances[v] = numeric_limits<int>::max();
+            }
+
+            if (newDist < distances[v]) {
+                distances[v] = newDist;
+                previous[v] = u;
+                pq.push({distances[v], v});
             }
         }
     }
 
-    // Find closest available
-    float min_dist = 1e9;
-    string target = "";
-    for (string avail : available) {
-        if (avail != source && dist[avail] < min_dist) {
-            min_dist = dist[avail];
-            target = avail;
-        }
-    }
-
-    json result = json::object();
-    if (target == "") {
-        result["matched"] = false;
-        return result.dump();
-    }
-
+    // Reconstruct path
     vector<string> path;
-    string curr = target;
-    while (curr != "") {
-        path.push_back(curr);
-        if (prev.find(curr) == prev.end()) break;
-        curr = prev[curr];
+    if (distances.find(targetNode) != distances.end() && distances[targetNode] != numeric_limits<int>::max()) {
+        string curr = targetNode;
+        while (curr != startNode) {
+            path.push_back(curr);
+            curr = previous[curr];
+        }
+        path.push_back(startNode);
+        reverse(path.begin(), path.end());
     }
-    reverse(path.begin(), path.end());
 
-    result["matched"] = true;
+    json result;
     result["path"] = path;
-    result["distance_km"] = min_dist;
-    result["target_id"] = target;
-    return result.dump();
+    result["distance"] = (path.empty()) ? -1 : distances[targetNode];
+    return result;
 }
 
-// ============================================================================
-// 3. OPERATION: bfs_backup (Breadth-First Search)
-// ============================================================================
+// ==========================================
+// 2. Breadth-First Search (Graphs)
+// ==========================================
+
 /*
- * DSA: BREADTH FIRST SEARCH
- * Explores hospital network level by level to find backup options.
- * Time: O(V+E)
+ * Algorithm: Breadth-First Search (BFS) for nearest backup hospital
+ * 
+ * Time Complexity: O(V + E)
+ *   where V is the number of hospitals and E is the number of connections. In the worst case, 
+ *   we visit every hospital and edge once.
+ * Space Complexity: O(V)
+ *   for the queue, visited set, and adjacency list if passed by reference.
  */
-string handle_bfs(const json& data) {
-    string source = data["source_id"];
-    vector<string> available = data["available_hospitals"].get<vector<string>>();
-    
-    unordered_map<string, vector<string>> adj;
-    for (auto& edge : data["edges"]) {
-        string u = edge["from_id"];
-        string v = edge["to_id"];
-        adj[u].push_back(v);
-        adj[v].push_back(u);
+json findNearestBackupHospital(const json& graphData, const json& inventoryData, const string& startNode, const string& requiredBloodType) {
+    // Build adjacency list
+    unordered_map<string, vector<string>> adjList;
+    for (const auto& edge : graphData) {
+        string u = edge["source"];
+        string v = edge["target"];
+        adjList[u].push_back(v);
+        adjList[v].push_back(u); 
     }
 
-    unordered_map<string, int> level;
-    queue<string> q;
-    q.push(source);
-    level[source] = 0;
+    // Inventory map: maps hospital ID to a list of available blood types
+    unordered_map<string, vector<string>> hospitalInventory;
+    for (const auto& item : inventoryData) {
+        hospitalInventory[item["hospitalId"]].push_back(item["bloodType"]);
+    }
 
-    json backups = json::array();
-    
+    queue<pair<string, int>> q; // {node, level/distance}
+    unordered_map<string, bool> visited;
+
+    q.push({startNode, 0});
+    visited[startNode] = true;
+
     while (!q.empty()) {
-        string u = q.front();
+        auto [u, dist] = q.front();
         q.pop();
 
-        if (u != source && find(available.begin(), available.end(), u) != available.end()) {
-            json b;
-            b["hospital_id"] = u;
-            b["level"] = level[u];
-            backups.push_back(b);
+        // Check if this hospital has the required blood type (skip start node)
+        if (u != startNode) {
+            const auto& inv = hospitalInventory[u];
+            if (find(inv.begin(), inv.end(), requiredBloodType) != inv.end()) {
+                json result;
+                result["hospital"] = u;
+                result["distanceLevel"] = dist;
+                return result;
+            }
         }
 
-        for (string v : adj[u]) {
-            if (level.find(v) == level.end()) {
-                level[v] = level[u] + 1;
-                q.push(v);
+        for (const string& v : adjList[u]) {
+            if (!visited[v]) {
+                visited[v] = true;
+                q.push({v, dist + 1});
             }
         }
     }
 
     json result;
-    result["backups"] = backups;
-    return result.dump();
+    result["hospital"] = nullptr;
+    return result;
 }
 
-// ============================================================================
-// 4. OPERATION: find_exchange_match (Hash Map)
-// ============================================================================
-/*
- * DSA: HASH MAP
- * Map: needs_group -> list of offers
- * O(1) average lookup vs O(n) linear scan
- */
-string handle_exchange(const json& data) {
-    auto new_offer = data["new_offer"];
-    string we_have = new_offer["has_group"];
-    string we_need = new_offer["needs_group"];
-    int units = new_offer["units"];
+// ==========================================
+// 3. Min-Heap / Priority Queue (Heaps)
+// ==========================================
 
-    unordered_map<string, vector<json>> offer_map;
-    for (auto& offer : data["existing_offers"]) {
-        if (offer["status"] == "pending") {
-            offer_map[offer["needs_group"].get<string>()].push_back(offer);
-        }
+struct BloodUnit {
+    string id;
+    string bloodType;
+    long long expiryTimestamp;
+
+    // Min-Heap comparator (FEFO - smallest timestamp first)
+    bool operator>(const BloodUnit& other) const {
+        return expiryTimestamp > other.expiryTimestamp;
     }
-
-    json result = json::object();
-    result["matched"] = false;
-
-    // Check if anyone needs what we have, and has what we need
-    if (offer_map.find(we_have) != offer_map.end()) {
-        for (auto& partner : offer_map[we_have]) {
-            if (partner["has_group"] == we_need && partner["has_units"] >= units) {
-                result["matched"] = true;
-                result["match_id"] = partner["id"];
-                result["match_hospital"] = partner["hospital_id"];
-                break;
-            }
-        }
-    }
-    return result.dump();
-}
-
-// ============================================================================
-// 5. OPERATION: risk_score (AI Scoring System)
-// ============================================================================
-/*
- * AI: RISK SCORING SYSTEM
- * Formula: score = 100 - sum(penalties)
- * Explainable AI mapping parameters to deductions.
- */
-string handle_risk(const json& data) {
-    int score = 100;
-    json penalties = json::array();
-    
-    int age = data["age"];
-    int days = data["days_since_donation"];
-    bool thinners = data["on_blood_thinners"];
-    vector<string> diseases = data["diseases"].get<vector<string>>();
-
-    if (days < 90) { score -= 15; penalties.push_back({{"reason", "days_since_donation < 90"}, {"points", -15}}); }
-    if (thinners) { score -= 30; penalties.push_back({{"reason", "On blood thinners"}, {"points", -30}}); }
-    
-    for (string d : diseases) {
-        if (d == "Diabetes") { score -= 10; penalties.push_back({{"reason", "Diabetes"}, {"points", -10}}); }
-        if (d == "Hypertension") { score -= 15; penalties.push_back({{"reason", "Hypertension"}, {"points", -15}}); }
-        if (d == "HIV" || d == "HepB" || d == "HepC") { score = 0; penalties.push_back({{"reason", d}, {"points", -100}}); }
-    }
-
-    score = max(0, score);
-    string level = (score >= 80) ? "safe" : ((score >= 50) ? "caution" : "blocked");
-
-    json result;
-    result["score"] = score;
-    result["level"] = level;
-    result["penalties"] = penalties;
-    return result.dump();
-}
-
-// ============================================================================
-// 6. OPERATION: screen_donor (Rule-based Expert System)
-// ============================================================================
-/*
- * AI: RULE-BASED EXPERT SYSTEM
- * Inference Engine: Forward Chaining
- */
-struct Rule {
-    string key, op, val, action;
-    int priority;
-    string explanation;
 };
 
-string handle_screen(const json& data) {
-    vector<Rule> kb = {
-        {"HIV", "contains", "HIV", "BLOCK", 10, "HIV detected"},
-        {"HepB", "contains", "HepB", "BLOCK", 10, "Hepatitis B"},
-        {"HepC", "contains", "HepC", "BLOCK", 10, "Hepatitis C"},
-        {"age", "less_than", "18", "BLOCK", 8, "Age under 18"},
-        {"days", "less_than", "90", "CAUTION", 5, "Recent donation"}
-    };
+/*
+ * Algorithm: Min-Heap for First-Expire-First-Out (FEFO) Blood Unit retrieval
+ * 
+ * Time Complexity: 
+ *   - Insertion: O(log N) per unit
+ *   - Retrieval/Top: O(1)
+ *   - Extraction/Pop: O(log N) per unit
+ *   - Overall for processing N units: O(N log N)
+ * Space Complexity: O(N)
+ *   where N is the number of blood units stored in the heap.
+ */
+json processFEFO(const json& bloodUnits) {
+    priority_queue<BloodUnit, vector<BloodUnit>, greater<BloodUnit>> minHeap;
 
-    vector<string> diseases = data["diseases"].get<vector<string>>();
-    int age = data["age"];
-    int days = data["days_since_donation"];
+    for (const auto& unit : bloodUnits) {
+        minHeap.push({
+            unit["id"],
+            unit["bloodType"],
+            unit["expiryTimestamp"]
+        });
+    }
 
-    json rules_fired = json::array();
-    string final_level = "safe";
-    bool safe = true;
-    string recommendation = "SAFE: Cleared for donation.";
+    json sortedUnits = json::array();
+    while (!minHeap.empty()) {
+        BloodUnit topUnit = minHeap.top();
+        minHeap.pop();
+        sortedUnits.push_back({
+            {"id", topUnit.id},
+            {"bloodType", topUnit.bloodType},
+            {"expiryTimestamp", topUnit.expiryTimestamp}
+        });
+    }
 
-    for (Rule r : kb) {
-        bool fired = false;
-        if (r.key == "age" && age < stoi(r.val)) fired = true;
-        if (r.key == "days" && days < stoi(r.val)) fired = true;
-        if (r.op == "contains" && find(diseases.begin(), diseases.end(), r.key) != diseases.end()) fired = true;
+    return sortedUnits;
+}
 
-        if (fired) {
-            rules_fired.push_back({{"rule", r.explanation}, {"action", r.action}, {"priority", r.priority}});
-            if (r.action == "BLOCK") {
-                safe = false;
-                final_level = "blocked";
-                recommendation = "BLOCKED: " + r.explanation;
-                break; // Highest priority block stops processing
-            } else if (final_level == "safe") {
-                final_level = "caution";
-                recommendation = "CAUTION: Review required.";
-            }
+// ==========================================
+// 4. Merge Sort (Divide & Conquer)
+// ==========================================
+
+struct Contract {
+    string contractId;
+    string hospitalId;
+    long long deadlineTimestamp;
+};
+
+/*
+ * Algorithm: Merge step of Merge Sort
+ * 
+ * Time Complexity: O(N)
+ *   where N is the number of elements being merged (right - left + 1).
+ * Space Complexity: O(N)
+ *   for the temporary dynamic arrays used during merging.
+ */
+void mergeContracts(vector<Contract>& arr, int left, int mid, int right) {
+    int n1 = mid - left + 1;
+    int n2 = right - mid;
+
+    // Using smart pointers for dynamic allocation (ensures no memory leaks per SE constraints)
+    unique_ptr<Contract[]> L(new Contract[n1]);
+    unique_ptr<Contract[]> R(new Contract[n2]);
+
+    for (int i = 0; i < n1; i++) L[i] = arr[left + i];
+    for (int j = 0; j < n2; j++) R[j] = arr[mid + 1 + j];
+
+    int i = 0, j = 0, k = left;
+    while (i < n1 && j < n2) {
+        if (L[i].deadlineTimestamp <= R[j].deadlineTimestamp) {
+            arr[k++] = L[i++];
+        } else {
+            arr[k++] = R[j++];
         }
     }
 
-    json result;
-    result["safe"] = safe;
-    result["level"] = final_level;
-    result["rules_fired"] = rules_fired;
-    result["recommendation"] = recommendation;
-    return result.dump();
+    while (i < n1) arr[k++] = L[i++];
+    while (j < n2) arr[k++] = R[j++];
 }
 
-// ============================================================================
-// 7. OPERATION: sort_contracts (Merge Sort)
-// ============================================================================
 /*
- * DSA: MERGE SORT
- * Sort contracts by return deadline (soonest first). Time: O(n log n)
+ * Algorithm: Merge Sort (Divide & Conquer)
+ * 
+ * Time Complexity: O(N log N)
+ *   where N is the number of contracts. The array is recursively divided in half and merged.
+ * Space Complexity: O(N)
+ *   Auxiliary space used in the merge step.
  */
-void mergeSort(vector<json>& arr, int l, int r) {
-    if (l >= r) return;
-    int m = l + (r - l) / 2;
-    mergeSort(arr, l, m);
-    mergeSort(arr, m + 1, r);
-
-    vector<json> temp;
-    int i = l, j = m + 1;
-    while (i <= m && j <= r) {
-        if (arr[i]["deadline_unix"] <= arr[j]["deadline_unix"]) temp.push_back(arr[i++]);
-        else temp.push_back(arr[j++]);
-    }
-    while (i <= m) temp.push_back(arr[i++]);
-    while (j <= r) temp.push_back(arr[j++]);
-    for (int k = l; k <= r; k++) arr[k] = temp[k - l];
+void mergeSortContracts(vector<Contract>& arr, int left, int right) {
+    if (left >= right) return;
+    int mid = left + (right - left) / 2;
+    mergeSortContracts(arr, left, mid);
+    mergeSortContracts(arr, mid + 1, right);
+    mergeContracts(arr, left, mid, right);
 }
 
-string handle_sort(const json& data) {
-    vector<json> contracts = data["contracts"].get<vector<json>>();
-    mergeSort(contracts, 0, contracts.size() - 1);
+/*
+ * Algorithm: Wrapper for sorting contracts via Merge Sort
+ * 
+ * Time Complexity: O(N log N)
+ * Space Complexity: O(N)
+ */
+json sortContracts(const json& contractsData) {
+    vector<Contract> contracts;
+    for (const auto& c : contractsData) {
+        contracts.push_back({
+            c["contractId"],
+            c["hospitalId"],
+            c["deadlineTimestamp"]
+        });
+    }
+
+    if (!contracts.empty()) {
+        mergeSortContracts(contracts, 0, contracts.size() - 1);
+    }
+
+    json sortedJson = json::array();
+    for (const auto& c : contracts) {
+        sortedJson.push_back({
+            {"contractId", c.contractId},
+            {"hospitalId", c.hospitalId},
+            {"deadlineTimestamp", c.deadlineTimestamp}
+        });
+    }
+
+    return sortedJson;
+}
+
+// ==========================================
+// 5. Hash Maps (Matching Engine)
+// ==========================================
+
+/*
+ * Algorithm: Hash Map matching engine for blood supply and demand
+ * 
+ * Time Complexity: O(R + O) -> O(N)
+ *   where R is the number of requests and O is the number of offers. Insertion and lookup
+ *   in an unordered_map take O(1) on average.
+ * Space Complexity: O(O)
+ *   for storing the offers in the unordered_map.
+ */
+json matchBloodRequests(const json& offersData, const json& requestsData) {
+    // Map BloodType -> vector of hospital IDs offering it
+    unordered_map<string, vector<string>> availableOffers;
+
+    for (const auto& offer : offersData) {
+        availableOffers[offer["bloodType"]].push_back(offer["hospitalId"]);
+    }
+
+    json matches = json::array();
+
+    for (const auto& request : requestsData) {
+        string requestedType = request["bloodType"];
+        string requestingHospital = request["hospitalId"];
+
+        if (availableOffers.find(requestedType) != availableOffers.end() && !availableOffers[requestedType].empty()) {
+            string offeringHospital = availableOffers[requestedType].back();
+            availableOffers[requestedType].pop_back(); // Consume the offer
+
+            matches.push_back({
+                {"requestingHospital", requestingHospital},
+                {"offeringHospital", offeringHospital},
+                {"bloodType", requestedType}
+            });
+        }
+    }
+
+    return matches;
+}
+
+// ==========================================
+// 6. AI Heuristics (Donor Risk Scoring)
+// ==========================================
+
+/*
+ * Algorithm: Donor Risk Scoring (AI Heuristics)
+ * 
+ * Time Complexity: O(R * D)
+ *   where R is the number of rules and D is the number of diseases per donor.
+ * Space Complexity: O(R)
+ *   for the knowledge base vector of rules.
+ */
+json riskScoreDonor(const json& donor) {
+    int score = 100;
+    json penalties = json::array();
+
+    int age = donor.value("age", 0);
+    float weight_kg = donor.value("weight_kg", 0.0f);
+    bool on_blood_thinners = donor.value("on_blood_thinners", false);
+    int days_since_last_donation = donor.value("days_since_last_donation", 999);
     
-    json result;
-    result["sorted"] = contracts;
-    return result.dump();
-}
+    vector<string> diseases;
+    if (donor.contains("diseases") && donor["diseases"].is_array()) {
+        for (const auto& d : donor["diseases"]) {
+            diseases.push_back(d.get<string>());
+        }
+    }
+    
+    int systolic_bp = donor.value("systolic_bp", 120);
+    int diastolic_bp = donor.value("diastolic_bp", 80);
 
-// ============================================================================
-// 8. OPERATION: detect_reaction (Reflex Agent)
-// ============================================================================
-/*
- * AI: RULE-BASED REACTION DETECTOR
- * Model-Based Reflex Agent
- */
-string handle_reaction(const json& data) {
-    auto pre = data["pre"];
-    auto post = data["post"];
+    vector<pair<bool, tuple<string, int, string>>> knowledgeBase = {
+        { age < 18 || age > 65, {"Age", 20, "Age outside safe range"} },
+        { weight_kg < 50.0f, {"Weight", 20, "Below minimum weight (50kg)"} },
+        { on_blood_thinners, {"Medication", 30, "Anticoagulant medication"} },
+        { days_since_last_donation < 90, {"Donation Interval", 15, "Insufficient recovery (<90 days)"} },
+        { find(diseases.begin(), diseases.end(), "Diabetes") != diseases.end(), {"Condition", 10, "Chronic condition: Diabetes"} },
+        { find(diseases.begin(), diseases.end(), "Hypertension") != diseases.end(), {"Condition", 10, "Chronic condition: Hypertension"} },
+        { find(diseases.begin(), diseases.end(), "HepB") != diseases.end() || find(diseases.begin(), diseases.end(), "HepC") != diseases.end() || find(diseases.begin(), diseases.end(), "HIV") != diseases.end(), {"Pathogen", 100, "Transmissible pathogen — BLOCKED"} },
+        { systolic_bp > 160 || diastolic_bp > 100, {"Blood Pressure", 15, "Hypertensive reading"} }
+    };
 
-    float temp_rise = post["temp"].get<float>() - pre["temp"].get<float>();
-    int bp_drop = pre["bp_sys"].get<int>() - post["bp_sys"].get<int>();
-    int bp_rise = post["bp_sys"].get<int>() - pre["bp_sys"].get<int>();
-
-    json result;
-    if (post["o2"] < 90 && post["bp_sys"] < 80) {
-        result = {{"reaction", "ANAPHYLAXIS"}, {"severity", 10}, {"action", "STOP. CODE BLUE."}, {"rule", "o2<90 AND bp_sys<80"}};
-    } else if (temp_rise > 2.0 && bp_drop > 30) {
-        result = {{"reaction", "HEMOLYTIC"}, {"severity", 9}, {"action", "STOP. Call doctor immediately."}, {"rule", "temp_rise>2.0 AND bp_drop>30"}};
-    } else if (temp_rise > 1.5) {
-        result = {{"reaction", "FEVER"}, {"severity", 7}, {"action", "Slow rate. Notify doctor."}, {"rule", "temp_rise>1.5"}};
-    } else if (bp_rise > 20) {
-        result = {{"reaction", "BP_SPIKE"}, {"severity", 6}, {"action", "Monitor closely."}, {"rule", "bp_sys_rise>20"}};
-    } else {
-        result = {{"reaction", "NORMAL"}, {"severity", 0}, {"action", "Continue normally ✓"}, {"rule", "none"}};
+    for (const auto& [condition, rule] : knowledgeBase) {
+        if (condition) {
+            auto [name, deduction, reason] = rule;
+            score -= deduction;
+            penalties.push_back({
+                {"rule", name},
+                {"deduction", deduction},
+                {"reason", reason}
+            });
+        }
     }
 
-    result["temp_rise"] = temp_rise;
-    return result.dump();
+    score = max(0, min(100, score));
+
+    string classification = "BLOCKED";
+    if (score >= 80) classification = "SAFE";
+    else if (score >= 50) classification = "CAUTION";
+
+    return {
+        {"final_score", score},
+        {"classification", classification},
+        {"penalties", penalties},
+        {"recommendation", (classification == "SAFE") ? "Eligible" : "Needs review"}
+    };
 }
 
-// ============================================================================
-// MAIN ENTRY POINT
-// ============================================================================
+// ==========================================
+// 7. Expert System (Forward Chaining Inference Engine)
+// ==========================================
+
+/*
+ * Algorithm: Rule-Based Expert System (Forward Chaining Inference Engine)
+ * 
+ * Time Complexity: O(R log R)
+ *   where R is the number of rules, for evaluating and sorting the fired rules.
+ * Space Complexity: O(R)
+ *   for storing the fired rules array.
+ */
+json expertScreenVitals(const json& vitals) {
+    struct Rule {
+        string name;
+        function<bool()> condition;
+        string consequence;
+        string action;
+        int priority;
+    };
+
+    string hiv_status = vitals.value("hiv_status", "negative");
+    string hepb_status = vitals.value("hepb_status", "negative");
+    string hepc_status = vitals.value("hepc_status", "negative");
+    string syphilis_status = vitals.value("syphilis_status", "negative");
+    string malaria_status = vitals.value("malaria_status", "negative");
+    float hemoglobin = vitals.value("hemoglobin", 15.0f);
+    int pulse = vitals.value("pulse", 75);
+    float temp_c = vitals.value("temp_c", 37.0f);
+
+    vector<Rule> knowledgeBase = {
+        {"HIV_CHECK", [&]() { return hiv_status == "positive"; }, "BLOODBORNE_PATHOGEN", "BLOCK", 10},
+        {"HEPB_CHECK", [&]() { return hepb_status == "positive"; }, "BLOODBORNE_PATHOGEN", "BLOCK", 10},
+        {"HEPC_CHECK", [&]() { return hepc_status == "positive"; }, "BLOODBORNE_PATHOGEN", "BLOCK", 9},
+        {"SYPHILIS_CHECK", [&]() { return syphilis_status == "positive"; }, "STI_DETECTED", "BLOCK", 8},
+        {"MALARIA_CHECK", [&]() { return malaria_status == "positive"; }, "PARASITIC_INFECTION", "DEFER_6_MONTHS", 7},
+        {"LOW_HEMOGLOBIN", [&]() { return hemoglobin < 12.5f; }, "ANEMIA_RISK", "DEFER_PENDING_TREATMENT", 5},
+        {"HIGH_PULSE", [&]() { return pulse > 100 || pulse < 50; }, "CARDIAC_ANOMALY", "CAUTION_REFER", 4},
+        {"FEVER_CHECK", [&]() { return temp_c > 37.5f; }, "ACTIVE_INFECTION", "DEFER_2_WEEKS", 6}
+    };
+
+    vector<Rule> fired_rules;
+    for (const auto& rule : knowledgeBase) {
+        if (rule.condition()) {
+            fired_rules.push_back(rule);
+        }
+    }
+
+    sort(fired_rules.begin(), fired_rules.end(), [](const Rule& a, const Rule& b) {
+        return a.priority > b.priority;
+    });
+
+    string verdict = "APPROVED";
+    if (!fired_rules.empty()) {
+        verdict = fired_rules.front().action;
+    }
+
+    json fired_rules_json = json::array();
+    vector<string> inference_chain;
+    for (const auto& rule : fired_rules) {
+        fired_rules_json.push_back({
+            {"rule", rule.name},
+            {"consequence", rule.consequence},
+            {"action", rule.action},
+            {"priority", rule.priority}
+        });
+        inference_chain.push_back(rule.name);
+    }
+
+    return {
+        {"verdict", verdict},
+        {"fired_rules", fired_rules_json},
+        {"total_rules_evaluated", (int)knowledgeBase.size()},
+        {"inference_chain", inference_chain}
+    };
+}
+
+
+// ==========================================
+// Main Entry Point
+// ==========================================
+
+/*
+ * Algorithm: Main IPC Handler
+ * 
+ * Time Complexity: Depends on the command invoked. (O(N) to parse JSON input)
+ * Space Complexity: O(N) to store the parsed JSON object in memory.
+ */
 int main() {
-    string input_json;
-    getline(cin, input_json);
-    
-    if (input_json.empty()) return 1;
+    // Optimize standard I/O operations for performance
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
 
     try {
-        auto data = json::parse(input_json);
-        string op = data["operation"];
-        
-        if (op == "fefo_sort")               cout << handle_fefo(data);
-        else if (op == "dijkstra")           cout << handle_dijkstra(data);
-        else if (op == "bfs_backup")         cout << handle_bfs(data);
-        else if (op == "find_exchange_match")cout << handle_exchange(data);
-        else if (op == "risk_score")         cout << handle_risk(data);
-        else if (op == "screen_donor")       cout << handle_screen(data);
-        else if (op == "sort_contracts")     cout << handle_sort(data);
-        else if (op == "detect_reaction")    cout << handle_reaction(data);
-        else cout << R"({"error": "Unknown operation"})";
+        // Read all input from stdin
+        string inputStr((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
+        if (inputStr.empty()) return 0;
+
+        json request = json::parse(inputStr);
+        json response;
+
+        string command = request.value("command", "");
+
+        if (command == "dijkstra") {
+            response = findShortestPath(
+                request["graph"], 
+                request["startNode"], 
+                request["targetNode"]
+            );
+        } 
+        else if (command == "bfs") {
+            response = findNearestBackupHospital(
+                request["graph"], 
+                request["inventory"], 
+                request["startNode"], 
+                request["requiredBloodType"]
+            );
+        } 
+        else if (command == "min_heap") {
+            response = processFEFO(request["bloodUnits"]);
+        } 
+        else if (command == "merge_sort") {
+            response = sortContracts(request["contracts"]);
+        } 
+        else if (command == "hash_match") {
+            response = matchBloodRequests(
+                request["offers"], 
+                request["requests"]
+            );
+        } 
+        else if (command == "risk_score") {
+            response = riskScoreDonor(request["donor"]);
+        }
+        else if (command == "expert_screen") {
+            response = expertScreenVitals(request["vitals"]);
+        }
+        else {
+            response["error"] = "Unknown command";
+        }
+
+        // Output JSON to stdout
+        cout << response.dump(4) << "\n";
+
+    } catch (const json::parse_error& e) {
+        cerr << "JSON Parse Error: " << e.what() << "\n";
+        return 1;
     } catch (const exception& e) {
-        cout << "{\"error\": \"" << e.what() << "\"}";
+        cerr << "Error: " << e.what() << "\n";
+        return 1;
     }
 
     return 0;

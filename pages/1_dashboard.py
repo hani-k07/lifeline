@@ -162,7 +162,7 @@ with r3a:
             <th>Unit ID</th><th>Group</th><th>Component</th>
             <th>Hospital</th><th>Temp</th><th>Expiry</th><th>Days</th>
         </tr></thead><tbody>{rows_html}</tbody></table>""", unsafe_allow_html=True)
-        st.markdown("<p style='color:#95A5A6;font-size:0.72rem;margin-top:8px;'>DSA: Min-Heap — FEFO order. O(log n) insert, O(1) peek.</p>", unsafe_allow_html=True)
+
     else:
         st.markdown("<div class='alert-warning' style='color:#00D2AA;border-left-color:#00D2AA;'>No units expiring within 7 days.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)

@@ -98,10 +98,11 @@ if sorted_c:
             else:
                 badge_label = f"⏳ {days_rem} days remaining"
             
+            status_map = {"EXPIRED": "231,76,60", "CRITICAL": "231,76,60", "WARNING": "243,156,18", "OK": "0,210,170"}
+            rgb = status_map.get(status_lbl, "149,165,166")
             badge_html = f"""
             <div style='
-                background:rgba({{"EXPIRED":"231,76,60","CRITICAL":"231,76,60",
-                                  "WARNING":"243,156,18","OK":"0,210,170"}}.get(status_lbl,"149,165,166"),0.15);
+                background:rgba({rgb},0.15);
                 border:1px solid {status_color};
                 border-radius:8px;
                 padding:4px 10px;
@@ -167,13 +168,3 @@ if sorted_c:
         st.markdown("<hr style='border-color:rgba(255,255,255,0.05);'>", unsafe_allow_html=True)
 else:
     st.info("No active contracts.")
-
-# ── DSA NOTE ────────────────────────────────────
-st.markdown("""<div class='glass-card' style='background:rgba(52,152,219,0.1);border-color:rgba(52,152,219,0.3);'>
-    <h4 style='color:#3498DB;margin-top:0;'>🧠 DSA Engine: Contract Management</h4>
-    <ul style='color:#ECF0F1;font-size:0.9rem;margin-bottom:0;'>
-        <li><b>Merge Sort:</b> <code style='color:#FFB347;'>O(n log n)</code> guaranteed performance for sorting thousands of contracts by deadline.</li>
-        <li><b>HashMap:</b> <code style='color:#FFB347;'>O(1)</code> ticket ID lookup for O(1) status updates.</li>
-        <li><b>Min-Heap:</b> <code style='color:#FFB347;'>O(log n)</code> to constantly monitor the nearest breaching contract for alert banners.</li>
-    </ul>
-</div>""", unsafe_allow_html=True)

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import time
 
 from utils.supabase_client import (
     get_blood_units, add_blood_unit, get_donors, get_hospitals,
@@ -125,7 +126,6 @@ with f1:
             </div>""", unsafe_allow_html=True)
     else:
         st.info("No units available.")
-    st.markdown("<p style='color:#95A5A6;font-size:0.7rem;margin-top:10px;'>DSA: Min-Heap ensures soonest-expiring unit is selected first. O(1) access.</p>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with f2:

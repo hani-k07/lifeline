@@ -100,107 +100,78 @@ with r2c2:
     st.plotly_chart(fig4, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ── DSA VISUALIZER ──────────────────────────────
+# ── OPERATIONAL RISK MATRIX ───────────────────────────────────
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>🔢 DSA: SORTING ALGORITHM VISUALIZER</div>", unsafe_allow_html=True)
-c1, c2, c3 = st.columns([3, 4, 3])
-algo = c1.selectbox("Select Algorithm", ["Bubble Sort"])
-speed = c2.slider("Animation Speed (sec)", 0.0, 1.0, 0.1)
-sort_btn = c3.button("▶ RUN VISUALIZATION", use_container_width=True)
-
-import random
-if "sort_arr" not in st.session_state:
-    st.session_state.sort_arr = [random.randint(10, 100) for _ in range(15)]
-
-plot_spot = st.empty()
-
-def plot_arr(arr, highlight_idx=-1):
-    colors = ["#ff416c" if i == highlight_idx else "#3498DB" for i in range(len(arr))]
-    fig = px.bar(x=list(range(len(arr))), y=arr)
-    fig.update_traces(marker_color=colors)
-    fig.update_layout(**dark, xaxis_title="Index", yaxis_title="Value", xaxis_showgrid=False, yaxis_showgrid=False)
-    plot_spot.plotly_chart(fig, use_container_width=True)
-
-if sort_btn:
-    arr = list(st.session_state.sort_arr)
-    n = len(arr)
-    comps = 0
-    for i in range(n):
-        for j in range(0, n-i-1):
-            comps += 1
-            plot_arr(arr, highlight_idx=j)
-            time.sleep(speed)
-            if arr[j] > arr[j+1]:
-                arr[j], arr[j+1] = arr[j+1], arr[j]
-    plot_arr(arr, -1)
-    st.session_state.sort_arr = arr
-    st.success(f"Sorted in {comps} comparisons. O(n²) time complexity.")
-else:
-    plot_arr(st.session_state.sort_arr)
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ── RISK MATRIX ─────────────────────────────────
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>SE LECTURE 11: RISK ANALYSIS (P = R × S)</div>", unsafe_allow_html=True)
+st.markdown("<div class='section-header'>OPERATIONAL RISK MATRIX</div>", unsafe_allow_html=True)
 
 risks = [
-    {"Risk": "Wrong blood transfusion", "Prob": 0.3, "Sev": 10},
-    {"Risk": "Data breach", "Prob": 0.4, "Sev": 10},
-    {"Risk": "Cold chain failure", "Prob": 0.5, "Sev": 9},
-    {"Risk": "C++ integration bugs", "Prob": 0.6, "Sev": 7},
-    {"Risk": "Contract breach", "Prob": 0.3, "Sev": 8},
-    {"Risk": "Staff resistance", "Prob": 0.5, "Sev": 6},
-    {"Risk": "Network downtime", "Prob": 0.2, "Sev": 9}
+    {"Risk": "Wrong blood transfusion",  "Probability": 0.3, "Severity": 10},
+    {"Risk": "Cold chain failure",        "Probability": 0.5, "Severity": 9},
+    {"Risk": "Contract breach",           "Probability": 0.3, "Severity": 8},
+    {"Risk": "Data integrity issue",      "Probability": 0.4, "Severity": 10},
+    {"Risk": "Staff shortage",            "Probability": 0.5, "Severity": 6},
+    {"Risk": "Network downtime",          "Probability": 0.2, "Severity": 9},
+    {"Risk": "Inventory stockout (O+)",   "Probability": 0.6, "Severity": 8},
 ]
 df_risk = pd.DataFrame(risks)
 
 c1, c2 = st.columns([4, 6])
 with c1:
-    edited_df = st.data_editor(df_risk, hide_index=True)
+    edited_df = st.data_editor(df_risk, hide_index=True, use_container_width=True)
 with c2:
-    edited_df["Score"] = edited_df["Prob"] * edited_df["Sev"]
-    edited_df["Color"] = edited_df["Score"].apply(lambda x: "High" if x>3.5 else ("Med" if x>2.0 else "Low"))
-    fig_r = px.scatter(edited_df, x="Prob", y="Sev", size="Score", color="Color", hover_name="Risk",
-                       color_discrete_map={"High":"#ff416c", "Med":"#FFB347", "Low":"#00D2AA"})
-    fig_r.update_layout(**dark, xaxis_title="Probability (0-1)", yaxis_title="Severity (1-10)")
+    edited_df["Score"] = edited_df["Probability"] * edited_df["Severity"]
+    edited_df["Level"] = edited_df["Score"].apply(
+        lambda x: "High" if x > 3.5 else ("Medium" if x > 2.0 else "Low")
+    )
+    fig_r = px.scatter(
+        edited_df, x="Probability", y="Severity",
+        size="Score", color="Level", hover_name="Risk",
+        color_discrete_map={"High": "#ff416c", "Medium": "#FFB347", "Low": "#00D2AA"}
+    )
+    fig_r.update_layout(
+        **dark,
+        xaxis_title="Probability (0–1)",
+        yaxis_title="Severity (1–10)"
+    )
     st.plotly_chart(fig_r, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ── COCOMO CALCULATOR ───────────────────────────
+# ── NETWORK HEALTH SUMMARY ────────────────────────────────────
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>SE LECTURE 9-10: COCOMO ESTIMATION MODEL</div>", unsafe_allow_html=True)
+st.markdown("<div class='section-header'>NETWORK HEALTH SUMMARY</div>", unsafe_allow_html=True)
 
-c1, c2 = st.columns([4, 6])
-with c1:
-    st.markdown("**Lines of Code (LOC) per Module**")
-    m1 = st.slider("DB & Backend", 100, 5000, 1500)
-    m2 = st.slider("DSA Engine (C++)", 100, 5000, 2000)
-    m3 = st.slider("Frontend App", 100, 10000, 3500)
-    kloc = (m1+m2+m3)/1000.0
-    
-    # Organic mode: E = 2.4 * (KLOC)^1.05, D = 2.5 * (E)^0.38
-    # Semi-detached mode: E = 3.0 * (KLOC)^1.12, D = 2.5 * (E)^0.35
-    effort = 3.0 * (kloc ** 1.12)
-    duration = 2.5 * (effort ** 0.35)
-    team = effort / duration if duration > 0 else 0
+h_data_full = []
+for h in hospitals:
+    u_count  = len([u for u in units if u["hospital_id"] == h["id"]])
+    critical = sum(1 for u in units if u["hospital_id"] == h["id"] and u.get("days_to_expiry", 99) <= 3)
+    temp_err = sum(1 for u in units if u["hospital_id"] == h["id"] and u.get("storage_temperature", 4) > 6.0)
+    if u_count == 0:
+        health = "Critical"
+    elif critical > 0 or temp_err > 0:
+        health = "Warning"
+    else:
+        health = "Good"
+    h_data_full.append({
+        "Hospital":      h["name"],
+        "Units":         u_count,
+        "Expiring Soon": critical,
+        "Temp Alerts":   temp_err,
+        "Status":        health,
+    })
 
-with c2:
-    st.markdown(f"""<div style='display:flex;gap:15px;margin-top:20px;'>
-        <div class='metric-card' style='flex:1;border-color:#3498DB;'>
-            <div class='metric-label'>Total Size</div>
-            <div class='metric-value'>{kloc:.1f} KLOC</div>
-        </div>
-        <div class='metric-card' style='flex:1;border-color:#ff416c;'>
-            <div class='metric-label'>Effort</div>
-            <div class='metric-value'>{effort:.1f} PM</div>
-        </div>
-        <div class='metric-card' style='flex:1;border-color:#00D2AA;'>
-            <div class='metric-label'>Duration</div>
-            <div class='metric-value'>{duration:.1f} Mo</div>
-        </div>
-        <div class='metric-card' style='flex:1;border-color:#FFB347;'>
-            <div class='metric-label'>Team Size</div>
-            <div class='metric-value'>{team:.1f} Devs</div>
+df_health = pd.DataFrame(h_data_full)
+for _, row in df_health.iterrows():
+    color = "#00D2AA" if row["Status"] == "Good" else ("#FFB347" if row["Status"] == "Warning" else "#ff416c")
+    st.markdown(f"""
+    <div style='display:flex;justify-content:space-between;align-items:center;
+        padding:10px 16px;border-left:3px solid {color};
+        background:rgba(0,0,0,0.2);border-radius:0 8px 8px 0;margin-bottom:8px;'>
+        <div style='color:white;font-weight:600;'>{row['Hospital']}</div>
+        <div style='display:flex;gap:24px;'>
+            <span style='color:#95A5A6;font-size:0.85rem;'>Units: <b style='color:white'>{row['Units']}</b></span>
+            <span style='color:#95A5A6;font-size:0.85rem;'>Expiring: <b style='color:#FFB347'>{row['Expiring Soon']}</b></span>
+            <span style='color:#95A5A6;font-size:0.85rem;'>Temp Alerts: <b style='color:#ff416c'>{row['Temp Alerts']}</b></span>
+            <span class='badge {"badge-safe" if row["Status"]=="Good" else ("badge-caution" if row["Status"]=="Warning" else "badge-critical")}'>{row['Status']}</span>
         </div>
     </div>""", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
