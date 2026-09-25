@@ -49,15 +49,18 @@ def stock_bars(counts: Mapping[str, int], title: str | None = "Available units b
 
 
 def usage_forecast(history: Sequence[float], forecast: Sequence[float], title: str, height: int = 320) -> go.Figure:
+    """`history` are the last full days (oldest first, ending yesterday); the forecast starts today (day 0)."""
     p = t.palette(current_theme())
-    days_back, days_ahead = len(history), len(forecast)
+    n = len(history)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=list(range(-days_back + 1, 1)), y=list(history), name="Actual usage", mode="lines+markers",
+    fig.add_trace(go.Scatter(x=list(range(-n, 0)), y=list(history), name="Actual usage", mode="lines+markers",
                              line=dict(color=p.info, width=2)))
-    fig.add_trace(go.Scatter(x=list(range(0, days_ahead + 1)), y=[history[-1] if history else 0, *forecast], name="Forecast",
+    fig.add_trace(go.Scatter(x=[-1, *range(0, len(forecast))], y=[history[-1] if history else 0, *forecast], name="Forecast",
                              mode="lines+markers", line=dict(color=p.brand_text, width=2, dash="dash")))
     fig.update_yaxes(rangemode="tozero")
-    return _apply(fig, title=title, height=height, x_title="Days from today (0 = today)", y_title="Units used per day")
+    fig = _apply(fig, title=title or None, height=height, x_title="Days from today (0 = today)", y_title="Units per day")
+    fig.update_layout(margin=dict(l=48, r=8, t=8 if not title else 44, b=8), legend=dict(orientation="h", y=1.12, x=0))
+    return fig
 
 
 def route_map(hospitals: Sequence[Mapping[str, Any]], edges: Sequence[tuple[float, float, float, float]] = (),

@@ -19,7 +19,7 @@
 
 /* ------------------------------------------------------------ base */
 html, body, .stApp { background: var(--bg-base) !important; color: var(--text-primary); font-family: var(--font); font-size: 15px; line-height: 1.5; }
-.stApp p, .stApp li, .stApp label, .stApp span { font-family: var(--font); }
+[data-testid="stIconMaterial"], .material-icons, .material-symbols-rounded { font-family: "Material Symbols Rounded", "Material Symbols Outlined", "Material Icons" !important; }
 h1, h2, h3, h4 { font-family: var(--font); color: var(--text-primary); letter-spacing: -0.01em; }
 a { color: var(--brand-text); }
 :focus-visible { outline: 2px solid var(--brand-text) !important; outline-offset: 2px; border-radius: var(--r-sm); }
@@ -30,7 +30,7 @@ a { color: var(--brand-text); }
 [data-testid="stHeader"] { background: color-mix(in srgb, var(--bg-base) 86%, transparent) !important; backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-subtle); }
 [data-testid="stToolbar"], #MainMenu, footer, [data-testid="stDecoration"] { visibility: hidden; }
 [data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"] { visibility: visible !important; }
-.block-container { padding: 3.25rem var(--s5) var(--s6) !important; max-width: 1440px !important; }
+.block-container { padding: 2.75rem var(--s5) var(--s5) !important; max-width: 1440px !important; }
 @media (max-width: 900px) { .block-container { padding: 3rem var(--s3) var(--s5) !important; } }
 
 /* ------------------------------------------------------------ Streamlit widgets follow the theme */
@@ -100,21 +100,21 @@ section[data-testid="stSidebar"] { background: var(--bg-surface) !important; bor
 .ll-sidebar-foot { margin: var(--s4) var(--s2) 0; font-size: .72rem; color: var(--text-secondary); }
 
 /* ------------------------------------------------------------ page + sections */
-.ll-title { font-size: var(--t-xl, 1.5rem); font-weight: 700; margin: 0; line-height: 1.2; }
-.ll-subtitle { color: var(--text-secondary); font-size: .875rem; margin: var(--s1) 0 var(--s4); }
-.ll-section { margin: var(--s5) 0 var(--s3); display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
+.ll-title { font-size: 1.5rem; font-weight: 700; margin: 0; line-height: 1.2; padding: 0; }
+.ll-subtitle { color: var(--text-secondary); font-size: .875rem; margin: 2px 0 var(--s3); }
+.ll-section { margin: var(--s4) 0 var(--s2); display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
 .ll-section h3 { font-size: 1.05rem; font-weight: 700; margin: 0; }
 .ll-section span { color: var(--text-secondary); font-size: .8125rem; }
 .ll-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-lg); padding: var(--s4); box-shadow: var(--shadow); }
 
 /* KPI cards */
 .ll-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s3); }
-.ll-kpi { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-lg); padding: var(--s3) var(--s4); box-shadow: var(--shadow); }
+.ll-kpi { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-lg); padding: var(--s2) var(--s4); box-shadow: var(--shadow); }
 .ll-kpi.tone-danger { box-shadow: inset 4px 0 0 var(--danger), var(--shadow); }
 .ll-kpi.tone-warning { box-shadow: inset 4px 0 0 var(--warning), var(--shadow); }
 .ll-kpi.tone-success { box-shadow: inset 4px 0 0 var(--success), var(--shadow); }
 .ll-kpi-label { font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-secondary); }
-.ll-kpi-value { font-family: var(--mono); font-size: 1.85rem; font-weight: 700; line-height: 1.15; margin-top: 2px; }
+.ll-kpi-value { font-family: var(--mono); font-size: 1.6rem; font-weight: 700; line-height: 1.15; margin-top: 2px; }
 .ll-kpi-hint { font-size: .78rem; color: var(--text-secondary); margin-top: 2px; }
 
 /* blood-group badges and status pills: text is always printed; Rh-negative is outlined, Rh-positive filled */

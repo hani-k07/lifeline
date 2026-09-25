@@ -1,169 +1,75 @@
-# pages/1_dashboard.py
-"""Command Center — LIFELINE v6.0"""
+"""Dashboard: the whole network state on one screen."""
 from __future__ import annotations
 
+from collections import Counter
+
 import streamlit as st
-import pandas as pd
-from datetime import datetime
-from lifeline.constants import BLOOD_GROUPS
 
-st.set_page_config(page_title="Dashboard — LIFELINE", layout="wide")
-
-from utils.styles import (
-    inject_all_styles, get_theme, metric_card, blood_badge, status_pill,
-    section_header, alert_banner, styled_table, inventory_bar,
-)
-from lifeline.auth.rbac import require_page
+from lifeline import clock
 from lifeline.auth.roles import Role
-from utils.sidebar import render_sidebar
+from lifeline.engine.forecasting import wma_forecast
+from lifeline.engine.triage import triage_order
+from lifeline.ui import charts
+from lifeline.ui import components as ui
+from lifeline.ui.layout import guard, page
 from utils.database import (
-    get_all_hospitals, get_blood_units, get_blood_summary,
-    get_audit_logs, get_blood_requests, get_dashboard_stats,
+    get_all_hospitals,
+    get_blood_requests,
+    get_contracts,
+    get_daily_usage,
+    get_dashboard_stats,
+    get_expiring_units,
 )
+from utils.helpers import time_until
 
-require_page(__file__)
+user = page(__file__, "Dashboard", "Live stock, emergencies and loans across the network")
 
-inject_all_styles(get_theme())
-render_sidebar()
+with guard():
+    scope = None if user.role is Role.SUPER_ADMIN else user.hospital_id
+    if user.role is Role.SUPER_ADMIN:
+        hospitals = get_all_hospitals()
+        choice = st.selectbox("Hospital", ["All hospitals"] + [h["name"] for h in hospitals], key="dash_scope",
+                              label_visibility="collapsed")
+        scope = next((h["id"] for h in hospitals if h["name"] == choice), None)
 
-_role = st.session_state.get("user_role", "")
-_hosp_id = st.session_state.get("user_hospital_id")
-_uid = int(st.session_state.get("user_id", 0))
-_hosp_name = st.session_state.get("user_hospital_name", "")
+    stats = get_dashboard_stats(scope)
+    requests = [r for r in get_blood_requests(scope) if r["status"] in ("PENDING", "RESERVED")]
+    loans = get_contracts(scope)
+    overdue = [c for c in loans if c["status"] == "BREACHED"]
+    critical_requests = sum(1 for r in requests if r["urgency"] == "CRITICAL")
 
-# ── Title Block ──
-st.markdown("""
-<div style="margin-bottom:24px">
-    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Dashboard</h1>
-    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
-        Live overview · LIFELINE Blood Logistics Network
-    </p>
-</div>""", unsafe_allow_html=True)
+    ui.kpi_row(
+        ui.kpi_card("Units available", stats["total_units"], hint="unexpired, in stock"),
+        ui.kpi_card("Groups in critical stock", len(stats["critical_groups"]),
+                    hint=", ".join(stats["critical_groups"]) or "none", tone="danger" if stats["critical_groups"] else "success"),
+        ui.kpi_card("Open emergencies", len(requests), hint=f"{critical_requests} critical", tone="danger" if critical_requests else "neutral"),
+        ui.kpi_card("Overdue loans", len(overdue), hint="past their return deadline", tone="danger" if overdue else "success"),
+    )
 
-# ── Hospital filter for admin ──
-if _role == Role.SUPER_ADMIN:
-    hospitals = get_all_hospitals()
-    hosp_options = {"All Hospitals": None}
-    for h in hospitals:
-        hosp_options[h["name"]] = h["id"]
-    sel = st.selectbox("Hospital Filter", list(hosp_options.keys()), index=0)
-    filter_id = hosp_options[sel]
-else:
-    filter_id = _hosp_id
+    left, right = st.columns([2, 1], gap="medium")
+    with left:
+        ui.section_header("Stock by blood group", "available, unexpired units")
+        ui.render(ui.stock_grid(stats["blood_summary"]))
 
-# ── Load data ──
-stats = get_dashboard_stats(filter_id)
-units = get_blood_units(filter_id)
-audit = get_audit_logs(5)
-requests = get_blood_requests(filter_id)
-pending_req = [r for r in requests if r.get("status") == "PENDING"]
+        history = get_daily_usage(scope, None, 14)
+        forecast = wma_forecast(history, horizon=7)
+        ui.section_header("Demand", "units issued or transfused per day, with a 7-day forecast")
+        charts.show(charts.usage_forecast(history, forecast, "", height=200))
 
-# ── KPI Metrics (4 column cards) ──
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.markdown(metric_card(
-        label="Total Blood Units",
-        value=f"{stats['total_units']}",
-        delta="+42 today",
-        delta_type="up",
-        icon="Stock",
-        variant="default"
-    ), unsafe_allow_html=True)
-with col2:
-    st.markdown(metric_card(
-        label="Critical Shortages",
-        value=f"{len(stats['critical_groups'])}",
-        delta=", ".join(stats["critical_groups"]) if stats["critical_groups"] else "None",
-        delta_type="down" if stats["critical_groups"] else "neutral",
-        icon="Alerts",
-        variant="critical" if stats["critical_groups"] else "default"
-    ), unsafe_allow_html=True)
-with col3:
-    st.markdown(metric_card(
-        label="Active Donors",
-        value=f"{stats['total_donors']}",
-        delta="+12 this week",
-        delta_type="up",
-        icon="Donors",
-        variant="success"
-    ), unsafe_allow_html=True)
-with col4:
-    st.markdown(metric_card(
-        label="Pending Requests",
-        value=f"{stats['pending_requests']}",
-        delta=f"{len([r for r in pending_req if r.get('urgency') == 'CRITICAL'])} CRITICAL",
-        delta_type="neutral",
-        icon="Triage",
-        variant="default"
-    ), unsafe_allow_html=True)
+    with right:
+        ui.section_header("Expiring in 72 hours", "use these first")
+        soon = Counter((u["hospital_name"], u["blood_group"], u["expiry_date"][:10]) for u in get_expiring_units(scope, 3))
+        ui.render(ui.row_list([(ui.Html(f"{n} × {ui.blood_group_badge(group)}"), f"{hospital} · {expiry}")
+                               for (hospital, group, expiry), n in sorted(soon.items(), key=lambda kv: kv[0][2])[:4]],
+                              empty="Nothing expires in the next 72 hours"))
 
-st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        ui.section_header("Open emergencies")
+        ui.render(ui.row_list([(ui.Html(f"{ui.status_pill(r['urgency'])} {ui.blood_group_badge(r['blood_group'])} × {r['units_needed']}"),
+                                f"#{r['id']} · {r['status'].title()}") for r in triage_order(requests)[:3]],
+                              empty="No open emergencies"))
 
-# ── Inventory and Map Column ──
-col_inv, col_map = st.columns([1, 1.6])
-with col_inv:
-    section_header("Blood Inventory", "Live stock across all hospitals")
-    bg_summary = stats["blood_summary"]
-    for bg in BLOOD_GROUPS:
-        bg_units = bg_summary.get(bg, 0)
-        st.markdown(inventory_bar(bg, bg_units, 200), unsafe_allow_html=True)
-
-with col_map:
-    section_header("Hospital Network", "Dijkstra routing active")
-    hospitals = get_all_hospitals()
-    
-    # Styled HTML Table for Hospital Network
-    network_data = []
-    for h in hospitals:
-        if filter_id and h["id"] != filter_id:
-            continue
-        h_summary = get_blood_summary(h["id"])
-        total = sum(h_summary.values())
-        status_txt = "CRITICAL" if total < 50 else "GOOD"
-        network_data.append({
-            "Hospital": h["name"],
-            "Units": total,
-            "Status": status_pill(status_txt),
-            "City": h.get("city", "Lahore")
-        })
-    
-    if network_data:
-        styled_table(pd.DataFrame(network_data))
-    else:
-        alert_banner("No hospital network data to display.", "info")
-
-st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-
-# ── Bottom Row: Recent Requests and AI Alerts ──
-col_table, col_ai = st.columns([1.6, 1])
-
-with col_table:
-    section_header("Recent Requests", "Latest emergency queue items")
-    if pending_req:
-        req_data = []
-        for r in pending_req[:5]:
-            ts = str(r.get("created_at", ""))[:16].replace("T", " ")
-            bg = r.get("blood_group", "?")
-            ug = r.get("urgency", "ROUTINE")
-            pt = r.get("patient_name", "—")
-            req_data.append({
-                "Timestamp": ts,
-                "Patient": pt,
-                "Blood Group": blood_badge(bg),
-                "Urgency": status_pill(ug)
-            })
-        styled_table(pd.DataFrame(req_data))
-    else:
-        alert_banner("No pending emergency requests.", "success")
-
-with col_ai:
-    section_header("AI Alerts", "Auto-generated insights")
-    # Display contextual alert banners based on data
-    if stats["critical_groups"]:
-        alert_banner(f"Critical supply levels for blood groups: {', '.join(stats['critical_groups'])}. Reorder immediately.", "danger")
-    else:
-        alert_banner("Global blood stock levels are adequate.", "success")
-        
-    alert_banner("B+ demand forecast shows a potential 35% usage spike this weekend.", "warning")
-    alert_banner("Dijkstra optimizer resolved nearest route from Mayo to Jinnah (1.2 km).", "info")
-
+        ui.section_header("Loans due")
+        due = sorted((c for c in loans if c["status"] in ("ACTIVE", "BREACHED")), key=lambda c: c["return_deadline"])[:2]
+        ui.render(ui.row_list([(ui.Html(f"{ui.status_pill(c['status'])} {c['units']} × {ui.blood_group_badge(c['blood_group'])}"),
+                                f"{c['borrower_name']} · {time_until(c['return_deadline'])}") for c in due], empty="No loans outstanding"))
+    st.caption(f"Updated {clock.now().strftime('%d %b %Y, %H:%M')} PKT")

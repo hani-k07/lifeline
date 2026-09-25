@@ -124,9 +124,10 @@ def get_reserved_counts() -> dict[int, int]:
 
 
 def get_daily_usage(hospital_id: int | None, blood_group: str | None, days: int = 14) -> list[float]:
-    """Units issued/transfused per day (oldest first), from the inventory event ledger."""
+    """Units issued/transfused per day for the last `days` FULL days (oldest first, ending yesterday), from the event ledger.
+    Today is left out: a half-finished day would drag every forecast down."""
     with _conn() as conn:
-        return events_repo.daily_usage(conn, hospital_id, blood_group, days, _today())
+        return events_repo.daily_usage(conn, hospital_id, blood_group, days, (clock.today() - timedelta(days=1)).isoformat())
 
 
 def get_inventory_events(hospital_id: int | None = None, limit: int = 50) -> list[dict]:
