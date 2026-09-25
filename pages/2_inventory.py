@@ -1,201 +1,177 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-import time
+# pages/2_inventory.py
+"""Blood Inventory Management — LIFELINE v6.0"""
+from __future__ import annotations
 
-from utils.supabase_client import (
-    get_blood_units, add_blood_unit, get_donors, get_hospitals,
-    update_unit_status, add_audit_log
+import streamlit as st
+import plotly.express as px
+import pandas as pd
+from datetime import datetime, timedelta
+
+st.set_page_config(page_title="Inventory — LIFELINE", layout="wide")
+
+from utils.styles import (
+    inject_all_styles, get_theme, section_header, alert_banner,
+    blood_badge, status_pill, styled_table,
 )
-from utils.dsa_bridge import fefo_sort
-from utils.helpers import get_days_to_expiry, get_status_color
+from utils.sidebar import render_sidebar
+from utils.database import (
+    get_all_hospitals, get_blood_units, add_blood_units,
+    update_blood_units, add_audit_log, get_blood_summary,
+)
 
 if not st.session_state.get("logged_in"):
-    st.warning("Please login from the main page.")
+    st.switch_page("app.py")
     st.stop()
 
-from utils.sidebar import render_sidebar
+inject_all_styles(get_theme())
 render_sidebar()
 
+_role = st.session_state.get("user_role", "")
+_hosp_id = st.session_state.get("user_hospital_id")
+_uid = int(st.session_state.get("user_id", 0))
+_hosp_name = st.session_state.get("user_hospital_name", "")
 
-role    = st.session_state.get("user_role")
-hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
+# ── Title Block ──
+st.markdown("""
+<div style="margin-bottom:24px">
+    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Inventory</h1>
+    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
+        Live stock and supply management
+    </p>
+</div>""", unsafe_allow_html=True)
 
-# ── MASTER CSS ──────────────────────────────────
-from utils.styles import get_glass_css
-st.markdown(get_glass_css(), unsafe_allow_html=True)
+BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
 
-st.markdown("<h1 style='color:white;'><span style='color:#ff416c;'>🩸</span> Blood Inventory Management</h1>", unsafe_allow_html=True)
-
-all_units = get_blood_units(None)
-if role != "super_admin":
-    units = [u for u in all_units if u.get("hospital_id") == hosp_id]
+# ── Hospital selection ──
+if _role == "admin":
+    hospitals = get_all_hospitals()
+    hosp_map = {h["name"]: h["id"] for h in hospitals}
+    sel_hosp_name = st.selectbox("Select Hospital", list(hosp_map.keys()))
+    sel_hosp_id = hosp_map[sel_hosp_name]
 else:
-    units = all_units
+    sel_hosp_id = _hosp_id
+    sel_hosp_name = _hosp_name
+    alert_banner(f"Showing inventory for: {sel_hosp_name}", "info")
 
-# ── QUICK STATS ─────────────────────────────────
-avail_count = len(units)
-reserved    = sum(1 for u in units if u.get("status") == "reserved")
-expiring    = sum(1 for u in units if u.get("days_to_expiry", 99) <= 5)
-temp_alerts = sum(1 for u in units if u.get("storage_temperature", 4) > 6.0)
+tab1, tab2, tab3 = st.tabs(["Current Stock", "Add Stock", "Consume Stock"])
 
-c1, c2, c3, c4 = st.columns(4)
-def stat_card(label, val, color):
-    return f"<div class='metric-card' style='border-left-color:{color};'><div class='metric-label'>{label}</div><div class='metric-value'>{val}</div></div>"
-c1.markdown(stat_card("Available", avail_count, "#00D2AA"), unsafe_allow_html=True)
-c2.markdown(stat_card("Reserved", reserved, "#3498DB"), unsafe_allow_html=True)
-c3.markdown(stat_card("Expiring ≤ 5 Days", expiring, "#FFB347"), unsafe_allow_html=True)
-c4.markdown(stat_card("Temp Alerts", temp_alerts, "#ff416c"), unsafe_allow_html=True)
+# ── Tab 1: View ──
+with tab1:
+    units = get_blood_units(sel_hosp_id)
+    if not units:
+        alert_banner("No blood units recorded. Add stock using the 'Add Stock' tab.", "warning")
+    else:
+        # Summary chart
+        summary = {}
+        for u in units:
+            bg = u["blood_group"]
+            summary[bg] = summary.get(bg, 0) + u["units"]
 
-st.markdown("<br>", unsafe_allow_html=True)
+        df_sum = pd.DataFrame(list(summary.items()), columns=["Blood Group", "Units"]).sort_values("Units", ascending=False)
+        fig = px.bar(df_sum, x="Blood Group", y="Units",
+                     color="Units", color_continuous_scale=["#1a0533", "#ff416c"],
+                     template="plotly_dark", title=f"Stock at {sel_hosp_name}")
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          height=300, coloraxis_showscale=False, margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig, use_container_width=True)
 
-# ── ADD BLOOD UNIT ──────────────────────────────
-with st.expander("➕ ADD NEW BLOOD UNIT"):
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    with st.form("add_unit_form", clear_on_submit=True):
+        # Expiry warning
+        today = datetime.today().date()
+        expiring_soon = []
+        for u in units:
+            if u.get("expiry_date"):
+                try:
+                    exp = datetime.strptime(u["expiry_date"][:10], "%Y-%m-%d").date()
+                    days_left = (exp - today).days
+                    if 0 <= days_left <= 7:
+                        expiring_soon.append({
+                            "Blood Group": blood_badge(u["blood_group"]),
+                            "Units": u["units"],
+                            "Expiry Date": u["expiry_date"][:10],
+                            "Days Left": days_left
+                        })
+                except Exception:
+                    pass
+
+        if expiring_soon:
+            alert_banner(f"{len(expiring_soon)} units expiring within 7 days!", "danger")
+            df_exp = pd.DataFrame(expiring_soon)
+            styled_table(df_exp)
+
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+        # Full inventory table
+        section_header("Full Inventory")
+        inv_rows = []
+        for u in units:
+            inv_rows.append({
+                "Blood Group": blood_badge(u["blood_group"]),
+                "Units": u["units"],
+                "Expiry Date": u["expiry_date"][:10] if u.get("expiry_date") else "—",
+                "Last Updated": u["updated_at"][:16].replace("T", " ") if u.get("updated_at") else "—"
+            })
+        if inv_rows:
+            df_inv = pd.DataFrame(inv_rows)
+            styled_table(df_inv)
+
+# ── Tab 2: Add Stock ──
+with tab2:
+    section_header("Add New Blood Units")
+    
+    error_msg = None
+    success_msg = None
+    
+    with st.form("add_stock_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            bg = st.selectbox("Blood Group", BLOOD_GROUPS, key="add_bg")
+        with col2:
+            qty = st.number_input("Units to Add", min_value=1, max_value=500, value=10)
+        with col3:
+            default_expiry = (datetime.now() + timedelta(days=21)).strftime("%Y-%m-%d")
+            expiry = st.date_input("Expiry Date", value=datetime.strptime(default_expiry, "%Y-%m-%d"))
+
+        submitted = st.form_submit_button("Add to Inventory", use_container_width=True)
+        if submitted:
+            ok = add_blood_units(sel_hosp_id, bg, qty, str(expiry), _uid)
+            if ok:
+                add_audit_log("INVENTORY_ADD", f"Added {qty} units of {bg} at {sel_hosp_name}", _uid)
+                success_msg = f"Added {qty} units of {bg} to {sel_hosp_name}"
+            else:
+                error_msg = "Failed to add units."
+
+    if success_msg:
+        alert_banner(success_msg, "success")
+        st.rerun()
+    elif error_msg:
+        alert_banner(error_msg, "danger")
+
+# ── Tab 3: Consume Stock ──
+with tab3:
+    section_header("Record Stock Consumption")
+    
+    error_msg_c = None
+    success_msg_c = None
+    
+    with st.form("consume_form"):
         col1, col2 = st.columns(2)
         with col1:
-            bg = st.selectbox("Blood Group", ["A+","A-","B+","B-","O+","O-","AB+","AB-"])
-            comp = st.selectbox("Component", ["Whole Blood", "RBC", "Platelets", "Plasma", "FFP"])
-            donors = get_donors()
-            donor_opts = {f"{d['full_name']} ({d['blood_group']})": d["id"] for d in donors}
-            donor_sel = st.selectbox("Donor", list(donor_opts.keys()))
-            vol = st.number_input("Volume (ml)", value=450)
-            
+            bg_c = st.selectbox("Blood Group", BLOOD_GROUPS, key="con_bg")
         with col2:
-            hospitals = get_hospitals()
-            if role == "super_admin":
-                hosp_opts = {h["name"]: h["id"] for h in hospitals}
-                hosp_sel = st.selectbox("Hospital", list(hosp_opts.keys()))
+            qty_c = st.number_input("Units Consumed", min_value=1, max_value=200, value=1)
+        reason_c = st.text_input("Reason / Patient Reference", placeholder="e.g. Surgery – Ward 3")
+        submitted_c = st.form_submit_button("Record Consumption", use_container_width=True)
+        if submitted_c:
+            ok = update_blood_units(sel_hosp_id, bg_c, -qty_c, reason_c, _uid)
+            if ok:
+                add_audit_log("INVENTORY_CONSUME", f"Consumed {qty_c} units of {bg_c} — {reason_c}", _uid)
+                success_msg_c = f"Recorded consumption of {qty_c} units of {bg_c}"
             else:
-                hosp_sel = next(h["name"] for h in hospitals if h["id"] == hosp_id)
-                st.text_input("Hospital", hosp_sel, disabled=True)
-            
-            coll_date = st.date_input("Collection Date")
-            exp_date = st.date_input("Expiry Date")
-            temp = st.number_input("Storage Temp (°C)", value=4.0, step=0.1)
+                error_msg_c = f"Failed — no {bg_c} stock record found for {sel_hosp_name}."
 
-        if st.form_submit_button("REGISTER UNIT IN INVENTORY", use_container_width=True):
-            hid = hosp_opts[hosp_sel] if role == "super_admin" else hosp_id
-            new_unit = {
-                "hospital_id": hid,
-                "donor_id": donor_opts[donor_sel],
-                "blood_group": bg,
-                "component": comp,
-                "volume_ml": vol,
-                "collection_date": str(coll_date),
-                "expiry_date": str(exp_date),
-                "storage_temperature": temp
-            }
-            if add_blood_unit(new_unit):
-                add_audit_log("UNIT_ADDED", st.session_state["email"], hid, "blood_unit", "NEW", new_unit)
-                st.success("✓ Unit successfully added to inventory.")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("Failed to add unit.")
-    st.markdown("</div>", unsafe_allow_html=True)
+    if success_msg_c:
+        alert_banner(success_msg_c, "success")
+        st.rerun()
+    elif error_msg_c:
+        alert_banner(error_msg_c, "danger")
 
-# ── COLD CHAIN ALERTS ───────────────────────────
-if temp_alerts > 0:
-    for u in units:
-        if u.get("storage_temperature", 4) > 6.0:
-            st.markdown(f"""<div class='alert-warning'>
-                <span class='live-dot-red'></span> <b>COLD CHAIN BREACH:</b> Unit {u.get('unit_code','')} ({u.get('blood_group','')}) at {u.get('storage_temperature')}°C. Move immediately!
-            </div>""", unsafe_allow_html=True)
-
-# ── FEFO QUEUE & FILTERS ────────────────────────
-f1, f2 = st.columns([3, 7])
-
-with f1:
-    st.markdown("<div class='glass-card' style='height:100%;'>", unsafe_allow_html=True)
-    st.markdown("<div class='section-header'>⏳ FEFO QUEUE — MIN-HEAP TOP 5</div>", unsafe_allow_html=True)
-    sorted_units = fefo_sort(units)
-    if sorted_units:
-        for i, u in enumerate(sorted_units[:5]):
-            d = u.get("days_to_expiry", 99)
-            color = "#ff416c" if i==0 else ("#FFB347" if d<=5 else "#00D2AA")
-            st.markdown(f"""<div style='background:rgba(0,0,0,0.3);border-left:3px solid {color};
-                padding:10px;margin-bottom:8px;border-radius:6px;'>
-                <div style='display:flex;justify-content:space-between;'>
-                    <b style='color:white;'>{u.get('blood_group','')} {u.get('component','')}</b>
-                    <span style='color:{color};font-size:0.8rem;'>{d} days left</span>
-                </div>
-                <div style='color:#95A5A6;font-size:0.7rem;font-family:monospace;'>{u.get('unit_code','')}</div>
-            </div>""", unsafe_allow_html=True)
-    else:
-        st.info("No units available.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with f2:
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='section-header'>INVENTORY FILTERS</div>", unsafe_allow_html=True)
-    fc1, fc2, fc3, fc4 = st.columns(4)
-    with fc1: f_bg = st.multiselect("Blood Group", ["A+","A-","B+","B-","O+","O-","AB+","AB-"])
-    with fc2: f_comp = st.multiselect("Component", ["Whole Blood", "RBC", "Platelets", "Plasma", "FFP"])
-    with fc3: 
-        if role == "super_admin":
-            hospitals = get_hospitals()
-            f_hosp = st.selectbox("Hospital", ["All"] + [h["name"] for h in hospitals])
-        else:
-            f_hosp = "All"
-    with fc4: f_alert = st.checkbox("Temp Alerts Only")
-
-    # Apply filters
-    filtered = sorted_units
-    if f_bg: filtered = [u for u in filtered if u.get("blood_group") in f_bg]
-    if f_comp: filtered = [u for u in filtered if u.get("component") in f_comp]
-    if f_hosp != "All": filtered = [u for u in filtered if u.get("hospital_name") == f_hosp]
-    if f_alert: filtered = [u for u in filtered if u.get("storage_temperature", 4) > 6.0]
-
-    st.markdown("<div class='section-header' style='margin-top:20px;'>MAIN INVENTORY</div>", unsafe_allow_html=True)
-    
-    if filtered:
-        rows = ""
-        for u in filtered:
-            d = u.get("days_to_expiry", 99)
-            row_bg = "rgba(255,65,108,0.1)" if d<=2 else ("rgba(255,179,71,0.05)" if d<=5 else "transparent")
-            badge = f"<span class='badge badge-critical'>{d}d</span>" if d<=2 else (f"<span class='badge badge-caution'>{d}d</span>" if d<=5 else f"<span class='badge badge-safe'>{d}d</span>")
-            temp = u.get("storage_temperature", 4)
-            t_str = f"⚠️ {temp}°C" if temp > 6.0 else f"{temp}°C"
-            rows += f"""<tr style='background:{row_bg};'>
-                <td><code style='color:#3498DB;'>{u.get('unit_code','')}</code></td>
-                <td><b>{u.get('blood_group','')}</b></td>
-                <td>{u.get('component','')}</td>
-                <td>{u.get('hospital_name','')}</td>
-                <td style='color:{"#ff416c" if temp>6.0 else "#ECF0F1"}'>{t_str}</td>
-                <td>{badge}</td>
-                <td>
-                    <button style='background:transparent;border:1px solid #3498DB;color:#3498DB;padding:2px 8px;border-radius:4px;cursor:pointer;'>Reserve</button>
-                </td>
-            </tr>"""
-        st.markdown(f"""<div style='max-height:400px;overflow-y:auto;'><table class='data-table'>
-            <thead><tr><th>Unit ID</th><th>Group</th><th>Component</th><th>Hospital</th><th>Temp</th><th>Expiry</th><th>Action</th></tr></thead>
-            <tbody>{rows}</tbody></table></div>""", unsafe_allow_html=True)
-    else:
-        st.info("No units match the selected filters.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ── CHARTS ──────────────────────────────────────
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-t1, t2 = st.tabs(["Inventory Distribution", "Expiry Scatter"])
-dark = dict(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(family="Outfit", color="white"), margin=dict(l=0,r=0,t=30,b=0))
-
-if filtered:
-    df = pd.DataFrame(filtered)
-    with t1:
-        bg_counts = df["blood_group"].value_counts().reset_index()
-        bg_counts.columns = ["Blood Group", "Count"]
-        fig1 = px.bar(bg_counts, x="Blood Group", y="Count", color="Count", color_continuous_scale=["#302b63","#ff416c"])
-        fig1.update_layout(**dark, coloraxis_showscale=False)
-        st.plotly_chart(fig1, use_container_width=True)
-    
-    with t2:
-        fig2 = px.scatter(df, x="collection_date", y="expiry_date", color="days_to_expiry", hover_data=["blood_group", "component"],
-                          color_continuous_scale=["#ff416c","#FFB347","#00D2AA"])
-        fig2.update_layout(**dark)
-        st.plotly_chart(fig2, use_container_width=True)
-else:
-    st.info("No data for charts.")
-st.markdown("</div>", unsafe_allow_html=True)

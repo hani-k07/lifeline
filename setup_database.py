@@ -1,194 +1,314 @@
+# setup_database.py
+"""
+LIFELINE v6.0 — Database Setup & Seeding
+Run once: python setup_database.py
+"""
+from __future__ import annotations
 import sqlite3
-import uuid
 import hashlib
-import os
+from pathlib import Path
 from datetime import datetime, timedelta
+import random
 
-DB_PATH = "lifeline.db"
+DB_PATH = Path(__file__).parent / "lifeline.db"
+BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
 
-def add_missing_columns():
-    """Add new columns to existing tables without destroying data."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Get existing columns for users table
-    cursor.execute("PRAGMA table_info(users)")
-    user_cols = [row[1] for row in cursor.fetchall()]
-    
-    user_new_cols = {
-        "phone_number": "TEXT DEFAULT ''",
-        "employee_id":  "TEXT DEFAULT ''",
-        "department":   "TEXT DEFAULT 'Blood Bank'",
-        "shift":        "TEXT DEFAULT 'Morning'",
-        "is_active":    "INTEGER DEFAULT 1",
-    }
-    for col, definition in user_new_cols.items():
-        if col not in user_cols:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
-    
-    # Get existing columns for hospitals table
-    cursor.execute("PRAGMA table_info(hospitals)")
-    hosp_cols = [row[1] for row in cursor.fetchall()]
-    
-    hosp_new_cols = {
-        "hospital_type": "TEXT DEFAULT 'Public'",
-        "status":        "TEXT DEFAULT 'active'",
-    }
-    for col, definition in hosp_new_cols.items():
-        if col not in hosp_cols:
-            cursor.execute(f"ALTER TABLE hospitals ADD COLUMN {col} {definition}")
-    
-    conn.commit()
-    conn.close()
-    print("✓ Missing columns added safely")
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-def setup():
-    # DO NOT remove lifeline.db as it contains real data
-    # if os.path.exists(DB_PATH):
-    #     os.remove(DB_PATH)
-    
-    add_missing_columns()
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
 
-    # Re-verify tables exist (in case someone deleted the file manually)
-    c.executescript("""
+def create_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+    PRAGMA foreign_keys = ON;
+
     CREATE TABLE IF NOT EXISTS hospitals (
-        id TEXT PRIMARY KEY, 
-        name TEXT, 
-        city TEXT,
-        address TEXT, 
-        contact_number TEXT,
-        lat REAL, 
-        lng REAL, 
-        hospital_type TEXT DEFAULT 'Public',
-        status TEXT DEFAULT 'active'
+        id          INTEGER PRIMARY KEY,
+        name        TEXT NOT NULL,
+        city        TEXT NOT NULL,
+        address     TEXT,
+        latitude    REAL,
+        longitude   REAL,
+        phone       TEXT
     );
+
     CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY, 
-        email TEXT UNIQUE,
-        password TEXT, 
-        full_name TEXT,
-        role TEXT, 
-        hospital_id TEXT,
-        phone_number TEXT DEFAULT '',
-        employee_id TEXT DEFAULT '',
-        department TEXT DEFAULT 'Blood Bank',
-        shift TEXT DEFAULT 'Morning',
-        is_active INTEGER DEFAULT 1
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        email         TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role          TEXT NOT NULL CHECK(role IN ('super_admin','hospital_admin','staff')),
+        name          TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        hospital_id   INTEGER REFERENCES hospitals(id)
     );
-    CREATE TABLE IF NOT EXISTS donors (
-        id TEXT PRIMARY KEY, cnic TEXT UNIQUE,
-        full_name TEXT, blood_group TEXT, age INTEGER,
-        last_donation_date TEXT, on_blood_thinners INTEGER DEFAULT 0,
-        risk_score INTEGER DEFAULT 100, diseases TEXT DEFAULT '',
-        screening_hiv TEXT DEFAULT 'passed',
-        screening_hepb TEXT DEFAULT 'passed',
-        screening_hepc TEXT DEFAULT 'passed',
-        screening_syphilis TEXT DEFAULT 'passed',
-        screening_malaria TEXT DEFAULT 'passed',
-        created_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS patients (
-        id TEXT PRIMARY KEY, hospital_id TEXT,
-        cnic TEXT, full_name TEXT, father_name TEXT,
-        age INTEGER, gender TEXT, blood_group TEXT, mrn TEXT,
-        ward TEXT, bed TEXT, opd_number TEXT, diagnosis TEXT,
-        created_at TEXT
-    );
+
     CREATE TABLE IF NOT EXISTS blood_units (
-        id TEXT PRIMARY KEY, hospital_id TEXT,
-        donor_id TEXT, blood_group TEXT, component TEXT,
-        volume_ml INTEGER, collection_date TEXT,
-        expiry_date TEXT, storage_temperature REAL,
-        status TEXT DEFAULT 'available'
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        hospital_id  INTEGER NOT NULL REFERENCES hospitals(id),
+        blood_group  TEXT NOT NULL,
+        units        INTEGER NOT NULL DEFAULT 0,
+        expiry_date  TEXT,
+        updated_at   TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS donors (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        name         TEXT NOT NULL,
+        cnic         TEXT,
+        phone        TEXT,
+        blood_group  TEXT NOT NULL,
+        hospital_id  INTEGER REFERENCES hospitals(id),
+        last_donated TEXT,
+        eligible     INTEGER DEFAULT 1,
+        notes        TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS blood_requests (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        requesting_hospital_id INTEGER NOT NULL REFERENCES hospitals(id),
+        blood_group           TEXT NOT NULL,
+        units_needed          INTEGER NOT NULL,
+        urgency               TEXT DEFAULT 'ROUTINE',
+        status                TEXT DEFAULT 'PENDING',
+        patient_name          TEXT,
+        patient_condition     TEXT,
+        created_at            TEXT NOT NULL,
+        resolved_at           TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS transfusions (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        hospital_id  INTEGER NOT NULL REFERENCES hospitals(id),
+        patient_name TEXT,
+        blood_group  TEXT NOT NULL,
+        units        INTEGER NOT NULL,
+        transfused_at TEXT NOT NULL,
+        performed_by TEXT,
+        notes        TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS exchanges (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_hospital_id     INTEGER NOT NULL REFERENCES hospitals(id),
+        to_hospital_id       INTEGER NOT NULL REFERENCES hospitals(id),
+        blood_group          TEXT NOT NULL,
+        units                INTEGER NOT NULL,
+        status               TEXT DEFAULT 'PENDING',
+        created_at           TEXT NOT NULL,
+        completed_at         TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS contracts (
-        id TEXT PRIMARY KEY, ticket_id TEXT UNIQUE,
-        lending_hospital_id TEXT, borrowing_hospital_id TEXT,
-        patient_id TEXT, blood_unit_id TEXT,
-        blood_group TEXT, component TEXT, units INTEGER DEFAULT 1,
-        issue_time TEXT, return_deadline TEXT,
-        status TEXT DEFAULT 'active',
-        is_exchange INTEGER DEFAULT 0, is_returned INTEGER DEFAULT 0
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        hospital_id  INTEGER NOT NULL REFERENCES hospitals(id),
+        vendor_name  TEXT NOT NULL,
+        blood_group  TEXT NOT NULL,
+        units_per_month INTEGER NOT NULL,
+        contract_start TEXT,
+        contract_end   TEXT,
+        status         TEXT DEFAULT 'ACTIVE'
     );
-    CREATE TABLE IF NOT EXISTS exchange_offers (
-        id TEXT PRIMARY KEY, offering_hospital_id TEXT,
-        receiving_hospital_id TEXT, offered_blood_group TEXT,
-        requested_blood_group TEXT, units INTEGER, status TEXT
+
+    CREATE TABLE IF NOT EXISTS screening_tests (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        donor_id    INTEGER REFERENCES donors(id),
+        hospital_id INTEGER REFERENCES hospitals(id),
+        test_date   TEXT NOT NULL,
+        hiv         INTEGER DEFAULT 0,
+        hepatitis_b INTEGER DEFAULT 0,
+        hepatitis_c INTEGER DEFAULT 0,
+        syphilis    INTEGER DEFAULT 0,
+        malaria     INTEGER DEFAULT 0,
+        result      TEXT DEFAULT 'PENDING'
     );
-    CREATE TABLE IF NOT EXISTS emergency_requests (
-        id TEXT PRIMARY KEY, requesting_hospital_id TEXT,
-        target_hospital_id TEXT, blood_group TEXT,
-        component TEXT, units_required INTEGER,
-        urgency_level TEXT, status TEXT, created_at TEXT
-    );
+
     CREATE TABLE IF NOT EXISTS audit_logs (
-        id TEXT PRIMARY KEY, action TEXT, actor_id TEXT,
-        hospital_id TEXT, entity_type TEXT, entity_id TEXT,
-        details TEXT, previous_hash TEXT, current_hash TEXT,
-        created_at TEXT
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        action_type TEXT NOT NULL,
+        description TEXT NOT NULL,
+        user_id     INTEGER REFERENCES users(id),
+        timestamp   TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS transfusion_records (
-        id TEXT PRIMARY KEY, patient_id TEXT,
-        unit_id TEXT, hospital_id TEXT,
-        pre_bp_sys INTEGER, pre_bp_dia INTEGER,
-        pre_pulse INTEGER, pre_temp REAL, pre_o2 INTEGER,
-        post_bp_sys INTEGER, post_bp_dia INTEGER,
-        post_pulse INTEGER, post_temp REAL, post_o2 INTEGER,
-        reaction_type TEXT DEFAULT 'none',
-        action_taken TEXT, nurse_name TEXT,
-        start_time TEXT, end_time TEXT
+
+    CREATE TABLE IF NOT EXISTS inventory_changes (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        hospital_id INTEGER REFERENCES hospitals(id),
+        blood_group TEXT NOT NULL,
+        change_type TEXT NOT NULL,
+        units_delta INTEGER NOT NULL,
+        reason      TEXT,
+        changed_at  TEXT NOT NULL,
+        changed_by  INTEGER REFERENCES users(id)
     );
-    CREATE TABLE IF NOT EXISTS notifications (
-        id TEXT PRIMARY KEY, hospital_id TEXT,
-        type TEXT, title TEXT, message TEXT,
-        is_read INTEGER DEFAULT 0, created_at TEXT
+
+    CREATE TABLE IF NOT EXISTS patients (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        name               TEXT NOT NULL,
+        age                INTEGER,
+        blood_group        TEXT NOT NULL,
+        cnic               TEXT,
+        phone              TEXT,
+        condition          TEXT,
+        admission_date     TEXT,
+        discharge_date     TEXT,
+        hospital_id        INTEGER NOT NULL REFERENCES hospitals(id),
+        attending_physician TEXT,
+        notes              TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_logs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        feature     TEXT NOT NULL,
+        input_summary TEXT,
+        response_preview TEXT,
+        hospital_id INTEGER REFERENCES hospitals(id),
+        user_id     INTEGER REFERENCES users(id),
+        created_at  TEXT NOT NULL
     );
     """)
-
-    # --- Hospitals (Fixing coordinates) ---
-    hospitals = [
-        ('Mayo Hospital',      'Lahore', 'Hospital Road, Lahore',        '042-99211129', 31.5734, 74.3044, 'Public', 'active'),
-        ('Shaukat Khanum Memorial Cancer Hospital',     'Lahore', '7A Block R-3, Johar Town',     '042-35905000', 31.4619, 74.2704, 'Private', 'active'),
-        ('Services Hospital',  'Lahore', 'Jail Road, Lahore',             '042-99203402', 31.5497, 74.3436, 'Teaching', 'active'),
-        ('Jinnah Hospital',    'Lahore', 'Jail Road, Lahore',             '042-99231400', 31.5204, 74.3587, 'Public', 'active'),
-    ]
-    
-    for h in hospitals:
-        # Update if exists, otherwise insert (using name as key for simplicity in seeding)
-        c.execute("SELECT id FROM hospitals WHERE name = ?", (h[0],))
-        row = c.fetchone()
-        if row:
-            c.execute("""UPDATE hospitals SET city=?, address=?, contact_number=?, lat=?, lng=?, hospital_type=?, status=? 
-                         WHERE id=?""", (h[1], h[2], h[3], h[4], h[5], h[6], h[7], row[0]))
-        else:
-            hid = str(uuid.uuid4())
-            c.execute("""INSERT INTO hospitals (id,name,city,address,contact_number,lat,lng,hospital_type,status) 
-                         VALUES (?,?,?,?,?,?,?,?,?)""", (hid, h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]))
-
-    # --- Users ---
-    pwd = hash_password("lifeline123")
-    # Using email as key to avoid duplicates
-    admin_users = [
-        ('admin@lifeline.com',    pwd, 'Super Admin',      'super_admin',    None, '0300-1234567', 'EMP-001', 'Admin', 'Morning', 1),
-    ]
-    for u in admin_users:
-        c.execute("SELECT id FROM users WHERE email = ?", (u[0],))
-        if not c.fetchone():
-            uid = str(uuid.uuid4())
-            c.execute("""INSERT INTO users (id,email,password,full_name,role,hospital_id,phone_number,employee_id,department,shift,is_active) 
-                         VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (uid, u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9]))
-
     conn.commit()
+
+
+def seed_hospitals(conn: sqlite3.Connection) -> None:
+    hospitals = [
+        (1, "Mayo Hospital",     "Lahore", "Nila Gumbad, Lahore",        31.5651, 74.3062, "+92-42-99200600"),
+        (2, "Services Hospital", "Lahore", "Sir Ganga Ram Hospital Rd",  31.5497, 74.3436, "+92-42-99203000"),
+        (3, "Jinnah Hospital",   "Lahore", "Allama Iqbal Road, Lahore",  31.5204, 74.3587, "+92-42-99231301"),
+        (4, "Shaukat Khanum",    "Lahore", "7-A Johar Town, Lahore",     31.4697, 74.2728, "+92-42-35945100"),
+        (5, "Lahore General",    "Lahore", "Jail Road, Lahore",          31.5560, 74.3288, "+92-42-99231601"),
+        (6, "CMH Lahore",        "Lahore", "Mall Road, Lahore",          31.5533, 74.3441, "+92-42-111-001"),
+        (7, "Sheikh Zayed",      "Lahore", "Canal Bank Road, Lahore",    31.4982, 74.3153, "+92-42-111-002"),
+        (8, "Ittefaq Hospital",  "Lahore", "Model Town, Lahore",         31.4829, 74.3284, "+92-42-111-003"),
+    ]
+    conn.executemany(
+        "INSERT OR IGNORE INTO hospitals (id,name,city,address,latitude,longitude,phone) VALUES (?,?,?,?,?,?,?)",
+        hospitals
+    )
+    conn.commit()
+
+
+def seed_users(conn: sqlite3.Connection) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    pw = hash_password("lifeline123")
+    users = [
+        ("admin@lifeline.com",            pw, "super_admin",    "Dr. Zara Ahmed (Admin)",          now, None),
+        ("mayo@lifeline.com",             pw, "hospital_admin", "Dr. Kamran Sheikh (Mayo)",         now, 1),
+        ("services@lifeline.com",         pw, "hospital_admin", "Dr. Amna Malik (Services)",        now, 2),
+        ("jinnah@lifeline.com",           pw, "hospital_admin", "Dr. Bilal Hassan (Jinnah)",        now, 3),
+        ("shaukat@lifeline.com",          pw, "hospital_admin", "Dr. Sara Yousaf (Shaukat)",        now, 4),
+        ("mayo.worker@lifeline.com",      pw, "staff",    "Nurse Hira Baig (Mayo)",           now, 1),
+        ("mayo.worker2@lifeline.com",     pw, "staff",    "Technician Saad Ali (Mayo)",       now, 1),
+        ("services.worker@lifeline.com",  pw, "staff",    "Nurse Rabia Naz (Services)",       now, 2),
+        ("jinnah.worker@lifeline.com",    pw, "staff",    "Technician Umar Farooq (Jinnah)",  now, 3),
+        ("shaukat.worker@lifeline.com",   pw, "staff",    "Nurse Fatima Zia (Shaukat)",       now, 4),
+        ("shaukat.worker2@lifeline.com",  pw, "staff",    "Technician Ali Hamza (Shaukat)",   now, 4),
+    ]
+    conn.executemany(
+        "INSERT OR IGNORE INTO users (email,password_hash,role,name,created_at,hospital_id) VALUES (?,?,?,?,?,?)",
+        users,
+    )
+    conn.commit()
+
+
+def seed_blood_inventory(conn: sqlite3.Connection) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    random.seed(42)
+    rows = []
+    for hosp_id in range(1, 9):
+        for bg in BLOOD_GROUPS:
+            units = random.randint(0, 60)
+            expiry = (datetime.now() + timedelta(days=random.randint(5, 35))).strftime("%Y-%m-%d")
+            rows.append((hosp_id, bg, units, expiry, now))
+    conn.executemany(
+        "INSERT INTO blood_units (hospital_id,blood_group,units,expiry_date,updated_at) VALUES (?,?,?,?,?)",
+        rows
+    )
+    conn.commit()
+
+
+def seed_donors(conn: sqlite3.Connection) -> None:
+    sample_donors = [
+        ("Ahmed Raza",    "35202-1234567-1", "0300-1234567", "O+",  1, "2024-11-01"),
+        ("Fatima Noor",   "35202-2345678-2", "0301-2345678", "A+",  1, "2024-10-15"),
+        ("Bilal Khan",    "35202-3456789-3", "0302-3456789", "B+",  2, "2024-12-01"),
+        ("Sara Malik",    "35202-4567890-4", "0303-4567890", "AB+", 2, "2024-09-20"),
+        ("Umar Farooq",   "35202-5678901-5", "0304-5678901", "O-",  3, "2025-01-10"),
+        ("Zainab Ali",    "35202-6789012-6", "0305-6789012", "A-",  3, "2024-11-25"),
+        ("Hassan Shah",   "35202-7890123-7", "0306-7890123", "B-",  4, "2025-02-01"),
+        ("Ayesha Iqbal",  "35202-8901234-8", "0307-8901234", "O+",  4, "2024-10-05"),
+        ("Imran Butt",    "35202-9012345-9", "0308-9012345", "A+",  1, "2025-01-20"),
+        ("Nadia Hussain", "35202-0123456-0", "0309-0123456", "B+",  2, "2024-12-15"),
+    ]
+    conn.executemany(
+        "INSERT INTO donors (name,cnic,phone,blood_group,hospital_id,last_donated,eligible) VALUES (?,?,?,?,?,?,1)",
+        sample_donors
+    )
+    conn.commit()
+
+
+def seed_sample_requests(conn: sqlite3.Connection) -> None:
+    """Seed some sample blood requests for demo purposes."""
+    now = datetime.now()
+    requests_data = [
+        (1, "A+",  3, "CRITICAL", "PENDING",  "Ali Hassan",    "Trauma surgery",  (now - timedelta(hours=2)).isoformat(timespec="seconds")),
+        (2, "O-",  5, "URGENT",   "PENDING",  "Maria Khan",    "Childbirth",      (now - timedelta(hours=1)).isoformat(timespec="seconds")),
+        (3, "B+",  2, "ROUTINE",  "PENDING",  "Jamil Ahmed",   "Elective surgery",(now - timedelta(minutes=30)).isoformat(timespec="seconds")),
+        (1, "AB+", 4, "URGENT",   "RESOLVED", "Saira Bibi",    "Cancer treatment",(now - timedelta(days=1)).isoformat(timespec="seconds")),
+        (4, "O+",  6, "CRITICAL", "PENDING",  "Usman Tariq",   "Road accident",   (now - timedelta(minutes=10)).isoformat(timespec="seconds")),
+    ]
+    conn.executemany(
+        "INSERT INTO blood_requests (requesting_hospital_id,blood_group,units_needed,urgency,status,patient_name,patient_condition,created_at) VALUES (?,?,?,?,?,?,?,?)",
+        requests_data
+    )
+    conn.commit()
+
+
+def seed_audit_logs(conn: sqlite3.Connection) -> None:
+    """Seed some sample audit log entries."""
+    now = datetime.now()
+    logs = [
+        ("LOGIN",          "User admin@lifeline.com logged in",          1, (now - timedelta(minutes=5)).isoformat(timespec="seconds")),
+        ("INVENTORY_ADD",  "Added 10 units of O+ at Mayo Hospital",      2, (now - timedelta(hours=1)).isoformat(timespec="seconds")),
+        ("EMERGENCY_REQ",  "Emergency request for A+ blood at Services",  3, (now - timedelta(hours=2)).isoformat(timespec="seconds")),
+        ("TRANSFUSION",    "Transfusion of B+ completed at Jinnah",       4, (now - timedelta(hours=3)).isoformat(timespec="seconds")),
+        ("LOGIN",          "User mayo@lifeline.com logged in",            2, (now - timedelta(hours=4)).isoformat(timespec="seconds")),
+    ]
+    conn.executemany(
+        "INSERT INTO audit_logs (action_type,description,user_id,timestamp) VALUES (?,?,?,?)",
+        logs
+    )
+    conn.commit()
+
+
+def main() -> None:
+    print("[*] LIFELINE v6.0 -- Database Setup")
+    if DB_PATH.exists():
+        answer = input("   [!] Database already exists. Delete and reseed? (yes/no): ").strip().lower()
+        if answer != "yes":
+            print("   -> Aborted. Existing database kept.")
+            return
+        DB_PATH.unlink()
+        print("   -> Old database deleted.")
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    print("   -> Creating schema...")
+    create_schema(conn)
+    print("   -> Seeding hospitals...")
+    seed_hospitals(conn)
+    print("   -> Seeding users (11 accounts)...")
+    seed_users(conn)
+    print("   -> Seeding blood inventory...")
+    seed_blood_inventory(conn)
+    print("   -> Seeding sample donors...")
+    seed_donors(conn)
+    print("   -> Seeding sample requests...")
+    seed_sample_requests(conn)
+    print("   -> Seeding audit logs...")
+    seed_audit_logs(conn)
     conn.close()
-    print("=" * 50)
-    print(" LIFELINE Database Updated Successfully!")
-    print("=" * 50)
+    print("\n[+] Database ready: lifeline.db")
+    print("   Run: streamlit run app.py")
+
 
 if __name__ == "__main__":
-    setup()
+    main()

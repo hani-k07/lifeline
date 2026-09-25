@@ -1,146 +1,54 @@
+# utils/sidebar.py
 import streamlit as st
-import os
-from utils.supabase_client import get_notifications, mark_notifications_read
-from utils.helpers import pakistan_time
 
-def render_sidebar():
-    if not st.session_state.get("logged_in"):
-        return
+PAGE_LINKS = [
+    ("pages/1_dashboard.py",   "Dashboard",   ["admin","hospital","staff"]),
+    ("pages/2_inventory.py",   "Inventory",   ["admin","hospital","staff"]),
+    ("pages/3_emergency.py",   "Emergency",   ["admin","hospital","staff"]),
+    ("pages/4_exchange.py",    "Exchange",    ["admin","hospital","staff"]),
+    ("pages/5_screening.py",   "Screening",   ["admin","hospital","staff"]),
+    ("pages/6_contracts.py",   "Contracts",   ["admin","hospital","staff"]),
+    ("pages/7_transfusion.py", "Transfusion", ["admin","hospital","staff"]),
+    ("pages/8_analytics.py",   "Analytics",   ["admin","hospital","staff"]),
+    ("pages/9_ai_center.py",   "AI Center",   ["admin","hospital"]),
+    ("pages/10_admin.py",      "Admin Panel", ["admin"]),
+]
 
-    role     = st.session_state.get("user_role")
-    hosp_id  = st.session_state.get("hospital_id")
-    fullname = st.session_state.get("full_name", "User")
-    user_id  = st.session_state.get("user_id")
+def render_sidebar() -> None:
+    role  = st.session_state.get("user_role", "")
+    name  = st.session_state.get("user_name", "User")
+    hosp  = st.session_state.get("user_hospital_name", "Global")
+    theme = st.session_state.get("theme", "dark")
 
-    # Check for deactivation
-    from utils.supabase_client import get_user_by_id
-    user_data = get_user_by_id(user_id)
-    if user_data and user_data.get('is_active', 1) == 0:
-        st.sidebar.error("🚨 ACCOUNT DEACTIVATED")
-        st.sidebar.warning("⛔ Your account has been deactivated.")
-        if st.sidebar.button("LOGOUT NOW"):
-            st.session_state.clear()
-            st.rerun()
-        st.stop()
-    
     with st.sidebar:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", use_container_width=True)
-        else:
-            st.markdown("<h2 style='text-align:center; color:#ff416c;'>LIFELINE</h2>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="padding:8px 0 16px">
+            <div class="sidebar-logo">LIFELINE</div>
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin:2px 0">{name}</div>
+            <div style="font-size:0.72rem;color:var(--text-muted)">{hosp}</div>
+            <span class="sidebar-role-badge">{role.upper()}</span>
+        </div>""", unsafe_allow_html=True)
 
-        st.markdown("<hr style='border-color:rgba(255,65,108,0.2); margin:8px 0;'>", unsafe_allow_html=True)
+        st.divider()
 
-        initials = fullname[0].upper() if fullname else "U"
-        
-        # Role Badge
-        badge_colors = {
-            "super_admin":    "#F39C12",
-            "hospital_admin": "#2980B9",
-            "staff":          "#00D2AA",
-        }
-        badge_color = badge_colors.get(role, "#00D2AA")
-        role_label  = role.replace("_", " ").title()
+        for path, label, allowed_roles in PAGE_LINKS:
+            if role in allowed_roles:
+                st.page_link(path, label=label)
+
+        st.divider()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Light" if theme == "dark" else "Dark", use_container_width=True, key="sidebar_theme_btn"):
+                st.session_state["theme"] = "light" if theme == "dark" else "dark"
+                st.rerun()
+        with col2:
+            if st.button("Logout", use_container_width=True, key="sidebar_logout_btn"):
+                st.session_state.clear()
+                st.switch_page("app.py")
 
         st.markdown(f"""
-        <div style='display:flex; align-items:center; gap:12px; padding:10px 0;'>
-            <div style='width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#ff416c,#ff4b2b);
-                        display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.1rem;
-                        color:white;flex-shrink:0;box-shadow:0 4px 12px rgba(255,65,108,0.3);'>{initials}</div>
-            <div>
-                <div style='color:white;font-weight:600;font-size:0.95rem;'>{fullname}</div>
-                <div style='
-                    display:inline-block;
-                    background:{badge_color};
-                    color:#fff;
-                    padding:2px 10px;
-                    border-radius:12px;
-                    font-size:0.75rem;
-                    font-weight:600;
-                    margin-top:4px;
-                '>{role_label}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        clock_slot = st.empty()
-        clock_slot.markdown(f"""<div style='text-align:center; font-size:0.8rem; color:#95A5A6;
-            background:rgba(0,0,0,0.3); border-radius:8px; padding:6px; margin:6px 0;'>
-            {pakistan_time()}</div>""", unsafe_allow_html=True)
-
-        notifs = get_notifications(hosp_id, unread_only=True)
-        n_count = len(notifs)
-        with st.expander(f"Notifications ({n_count})"):
-            if notifs:
-                for n in notifs[:5]:
-                    c = "#ff416c" if n["type"] == "critical" else ("#FFB347" if n["type"] == "warning" else "#3498DB")
-                    st.markdown(f"<div style='border-left:3px solid {c}; padding-left:8px; margin-bottom:8px;'>"
-                                f"<div style='font-size:0.8rem; font-weight:600; color:white;'>{n['title']}</div>"
-                                f"<div style='font-size:0.7rem; color:#95A5A6;'>{n['message']}</div>"
-                                f"</div>", unsafe_allow_html=True)
-                if st.button("Mark All Read", key="read_notifs_sb"):
-                    mark_notifications_read(hosp_id)
-                    st.rerun()
-            else:
-                st.markdown("<div style='font-size:0.8rem; color:#95A5A6;'>No new notifications</div>", unsafe_allow_html=True)
-
-        st.markdown("<hr style='border-color:rgba(255,255,255,0.06); margin:8px 0;'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-header'>NAVIGATION</div>", unsafe_allow_html=True)
-
-        st.markdown("""
-        <style>
-        [data-testid="stPageLink-NavLink"] {
-            border-radius: 6px;
-            margin-bottom: 4px;
-            font-size: 0.95rem;
-            transition: all 0.2s;
-            font-weight: 500;
-        }
-        [data-testid="stPageLink-NavLink"]:hover {
-            background: rgba(255,65,108,0.15) !important;
-        }
-        [data-testid="stPageLink-NavLink"] p {
-            color: #ECF0F1 !important;
-        }
-        [data-testid="stPageLink-NavLink"]:hover p {
-            color: #ff416c !important;
-        }
-        [data-testid="stPageLink-Icon"] { display: none !important; }
-        [data-testid="stPageLink-NavLink"] span:first-child:not([class]) { display: none !important; }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        st.page_link("app.py", label="🏠 Home")
-        st.page_link("pages/1_dashboard.py", label="📊 Dashboard")
-        st.page_link("pages/2_inventory.py", label="📦 Inventory")
-        st.page_link("pages/3_emergency.py", label="🚨 Emergency")
-        
-        if role in ["super_admin", "hospital_admin"]:
-            st.page_link("pages/4_exchange.py", label="🔄 Exchange")
-            
-        st.page_link("pages/5_screening.py", label="💉 Screening")
-        st.page_link("pages/6_contracts.py", label="📄 Contracts")
-        st.page_link("pages/7_transfusion.py", label="🩸 Transfusion")
-        
-        if role in ["super_admin", "hospital_admin"]:
-            st.page_link("pages/8_analytics.py", label="📈 Analytics")
-        
-        if role == "super_admin":
-            st.page_link("pages/9_admin.py", label="🛡️ Admin Panel")
-            
-        if role in ["super_admin", "hospital_admin"]:
-            st.page_link("pages/10_hospital_mgmt.py", label="🏥 Hospital Mgmt")
-            
-        st.page_link("pages/11_my_profile.py", label="👤 My Profile")
-
-        st.markdown("<hr style='border-color:rgba(255,255,255,0.06); margin:8px 0;'>", unsafe_allow_html=True)
-
-        st.markdown("""<div style='text-align:center;'>
-            <span class='live-dot'></span>
-            <span style='color:#00D2AA; font-size:0.82rem; font-weight:600;'>Network Active</span>
+        <div style="position:fixed;bottom:20px;left:0;width:240px;text-align:center;
+                    font-size:0.65rem;color:var(--text-muted);font-family:'JetBrains Mono',monospace">
+            LIFELINE v6.0 · NASTP-NIIT<br>Dept. of Artificial Intelligence
         </div>""", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        if st.button("LOGOUT", use_container_width=True):
-            st.session_state.clear()
-            st.rerun()

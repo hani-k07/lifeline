@@ -1,171 +1,129 @@
-import streamlit as st
-import time
+# pages/4_exchange.py
+"""Blood Exchange Network — LIFELINE v6.0"""
+from __future__ import annotations
 
-from utils.supabase_client import (
-    get_exchange_offers, create_exchange_offer, get_hospitals,
-    update_exchange_offer, create_contract, add_audit_log
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+
+st.set_page_config(page_title="Exchange — LIFELINE", layout="wide")
+
+from utils.styles import (
+    inject_all_styles, get_theme, section_header, alert_banner,
+    blood_badge, status_pill, styled_table,
 )
-from utils.dsa_bridge import find_exchange_match
-from utils.helpers import format_countdown
+from utils.sidebar import render_sidebar
+from utils.database import (
+    get_all_hospitals, get_exchanges, add_exchange,
+    get_blood_units, add_audit_log,
+)
+from dsa_engine import build_hospital_graph, BLOOD_GROUPS
 
 if not st.session_state.get("logged_in"):
-    st.warning("Please login from the main page.")
+    st.switch_page("app.py")
     st.stop()
 
-# Access Control
-role = st.session_state.get("user_role", "staff")
-if role not in ["super_admin", "hospital_admin"]:
-    st.markdown("""
-    <style>
-    .glass-card {
-        background: rgba(20,20,35,0.7);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 16px;
-        text-align: center;
-    }
-    </style>
-    <div class='glass-card' style='border-color:rgba(255,65,108,0.4);'>
-        <h2 style='color:white;'>🚫 Access Denied</h2>
-        <p style='color:#95A5A6;'>You do not have permission to view this page. Hospital Admin or Super Admin only.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
-
-from utils.sidebar import render_sidebar
+inject_all_styles(get_theme())
 render_sidebar()
 
+_role = st.session_state.get("user_role", "")
+_hosp_id = st.session_state.get("user_hospital_id")
+_uid = int(st.session_state.get("user_id", 0))
+_hosp_name = st.session_state.get("user_hospital_name", "")
 
-role    = st.session_state.get("user_role")
-hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
-
-from utils.styles import get_glass_css
-st.markdown(get_glass_css(), unsafe_allow_html=True)
-
-st.markdown("<h1 style='color:white;'><span style='color:#3498DB;'>🔄</span> Blood Exchange Marketplace</h1>", unsafe_allow_html=True)
-
-st.markdown("""<div class='glass-card'>
-    <p style='color:#95A5A6;font-size:1.1rem;margin:0;'>If your hospital has surplus <b style='color:#2ECC71;'>B+</b> but needs <b style='color:#3498DB;'>A+</b>, and another hospital has surplus <b style='color:#3498DB;'>A+</b> but needs <b style='color:#2ECC71;'>B+</b>, LIFELINE matches you instantly for zero-cost exchange.</p>
+# ── Title Block ──
+st.markdown("""
+<div style="margin-bottom:24px">
+    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Blood Exchange</h1>
+    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
+        Inter-hospital blood transfers powered by Dijkstra graph routing
+    </p>
 </div>""", unsafe_allow_html=True)
 
-# ── POST OFFER FORM ─────────────────────────────
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>POST EXCHANGE OFFER</div>", unsafe_allow_html=True)
+tab1, tab2 = st.tabs(["Find & Request Exchange", "Exchange History"])
 
-with st.form("offer_form"):
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("<h4 style='color:#00D2AA;'>🟢 WE HAVE (Surplus)</h4>", unsafe_allow_html=True)
-        has_bg = st.selectbox("Blood Group", ["A+","A-","B+","B-","O+","O-","AB+","AB-"], key="has_bg")
-        has_units = st.number_input("Units Available", 1, 10, 1, key="has_units")
-    with c2:
-        st.markdown("<h4 style='color:#ff416c;'>🔴 WE NEED (Deficit)</h4>", unsafe_allow_html=True)
-        needs_bg = st.selectbox("Blood Group", ["A+","A-","B+","B-","O+","O-","AB+","AB-"], key="needs_bg")
-        needs_units = st.number_input("Units Required", 1, 10, 1, key="needs_units")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    submitted = st.form_submit_button("FIND MATCH 🔄", use_container_width=True)
+with tab1:
+    hospitals = get_all_hospitals()
 
-if submitted:
-    if has_bg == needs_bg:
-        st.error("Cannot exchange same blood group.")
-    elif not hosp_id:
-        st.error("Please login as a hospital to post offers.")
-    else:
-        new_offer = {
-            "offering_hospital_id": hosp_id,
-            "has_blood_group": has_bg,
-            "needs_blood_group": needs_bg,
-            "units": has_units
-        }
-        
-        all_pending = get_exchange_offers(status="pending")
-        # Filter out own offers
-        others_pending = [o for o in all_pending if o.get("offering_hospital_id") != hosp_id]
-        
-        with st.spinner("Searching network for complementary offer..."):
-            match_res = find_exchange_match(new_offer, others_pending)
-            time.sleep(1)
-            
-            if match_res.get("matched"):
-                matched_offer = match_res.get("matched_offer", {})
-                partner_id = matched_offer.get("offering_hospital_id")
-                
-                # Save new offer as matched
-                o_id = create_exchange_offer({
-                    "offering_hospital_id": hosp_id,
-                    "receiving_hospital_id": partner_id,
-                    "offered_blood_group": has_bg,
-                    "requested_blood_group": needs_bg,
-                    "units": has_units,
-                    "status": "matched"
-                })
-                # Update existing
-                update_exchange_offer(matched_offer.get("id"), "matched", hosp_id)
-                
-                # Create bilateral contracts
-                create_contract({
-                    "lending_hospital_id": hosp_id, "borrowing_hospital_id": partner_id,
-                    "blood_group": has_bg, "units": has_units, "is_exchange": 1
-                })
-                create_contract({
-                    "lending_hospital_id": partner_id, "borrowing_hospital_id": hosp_id,
-                    "blood_group": needs_bg, "units": needs_units, "is_exchange": 1
-                })
-                
-                add_audit_log("EXCHANGE_MATCHED", st.session_state["email"], hosp_id, "exchange", o_id, {"partner": partner_id})
-                
-                st.success("✓ PERFECT MATCH FOUND! Bilateral transfer contracts generated.")
-                st.balloons()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if _role == "admin":
+            src_name = st.selectbox("From Hospital (Requesting)", [h["name"] for h in hospitals])
+        else:
+            src_name = _hosp_name
+            alert_banner(f"Requesting hospital: {src_name}", "info")
+    with col2:
+        blood_grp = st.selectbox("Blood Group Needed", BLOOD_GROUPS)
+    with col3:
+        units_req = st.number_input("Units Required", min_value=1, max_value=100, value=5)
+
+    find_clicked = st.button("Find Available Sources (Dijkstra)", use_container_width=True)
+    if find_clicked:
+        src_hosp = next((h for h in hospitals if h["name"] == src_name), None)
+        if src_hosp:
+            graph = build_hospital_graph(hospitals)
+            all_inv = get_blood_units()
+            nearest = graph.nearest_hospitals_with_blood(src_hosp["id"], blood_grp, all_inv)
+
+            if nearest:
+                st.session_state["exchange_results"] = nearest
+                st.session_state["exchange_src"] = src_hosp
+                st.session_state["exchange_bg"] = blood_grp
+                st.session_state["exchange_units"] = units_req
             else:
-                o_id = create_exchange_offer({
-                    "offering_hospital_id": hosp_id,
-                    "offered_blood_group": has_bg,
-                    "requested_blood_group": needs_bg,
-                    "units": has_units,
-                    "status": "pending"
-                })
-                add_audit_log("EXCHANGE_POSTED", st.session_state["email"], hosp_id, "exchange", o_id, new_offer)
-                st.info("Offer posted to marketplace. Awaiting network match.")
+                alert_banner(f"No hospitals in the network have available {blood_grp} stock.", "warning")
 
-st.markdown("</div>", unsafe_allow_html=True)
+    # Show results
+    if "exchange_results" in st.session_state:
+        results = st.session_state["exchange_results"]
+        src = st.session_state["exchange_src"]
+        bg = st.session_state["exchange_bg"]
+        needed = st.session_state["exchange_units"]
 
-# ── MARKETPLACE BOARD ───────────────────────────
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-t1, t2 = st.tabs(["Pending Offers", "Active Matches"])
+        section_header(f"Results", f"{len(results)} hospitals with {bg}")
 
-with t1:
-    pending = get_exchange_offers(status="pending")
-    if pending:
-        rows = ""
-        for p in pending:
-            rows += f"""<tr>
-                <td>{p.get('offer_code')}</td>
-                <td>{p.get('offering_name','Unknown')}</td>
-                <td><span style='color:#00D2AA;font-weight:bold;'>{p.get('offered_blood_group')}</span> ({p.get('units')}u)</td>
-                <td><span style='color:#ff416c;font-weight:bold;'>{p.get('requested_blood_group')}</span></td>
-                <td><button style='background:transparent;border:1px solid #3498DB;color:#3498DB;border-radius:4px;'>Accept</button></td>
-            </tr>"""
-        st.markdown(f"<table class='data-table'><thead><tr><th>Offer ID</th><th>Hospital</th><th>Offering</th><th>Requesting</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table>", unsafe_allow_html=True)
+        for r in results[:5]:
+            with st.container():
+                c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+                eta = round(r["distance_km"] / 5 * 15, 0)
+                
+                c1.markdown(f"<div style='font-size:0.95rem;font-weight:600;'>{r['hospital_name']}</div>", unsafe_allow_html=True)
+                c2.markdown(f"<span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem;'>{r['distance_km']} km</span>", unsafe_allow_html=True)
+                c3.markdown(f"<span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem;'>{r['units_available']} units</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem;'>~{int(eta)} min ETA</span>", unsafe_allow_html=True)
+
+                # Path display
+                if r.get("path"):
+                    path_names = []
+                    hosp_id_to_name = {h["id"]: h["name"] for h in hospitals}
+                    for pid in r["path"]:
+                        path_names.append(hosp_id_to_name.get(pid, str(pid)))
+                    st.caption(f"Route: {' -> '.join(path_names)}")
+
+                if st.button(f"Request Exchange from {r['hospital_name']}", key=f"req_{r['hospital_id']}"):
+                    ok = add_exchange(r["hospital_id"], src["id"], bg, min(needed, r["units_available"]))
+                    if ok:
+                        add_audit_log("EXCHANGE_REQUEST", f"Exchange request: {bg} from {r['hospital_name']} to {src['name']}", _uid)
+                        alert_banner(f"Exchange request sent to {r['hospital_name']}", "success")
+                        del st.session_state["exchange_results"]
+                        st.rerun()
+                st.divider()
+
+with tab2:
+    exchanges = get_exchanges(_hosp_id if _role != "admin" else None)
+    if not exchanges:
+        alert_banner("No exchange transactions recorded yet.", "info")
     else:
-        st.info("No pending offers.")
+        history_rows = []
+        for ex in exchanges:
+            history_rows.append({
+                "From": ex.get("from_name", "—"),
+                "To": ex.get("to_name", "—"),
+                "Blood Group": blood_badge(ex.get("blood_group", "?")),
+                "Units": ex.get("units", 0),
+                "Status": status_pill(ex.get("status", "PENDING")),
+                "Created": ex.get("created_at", "")[:16].replace("T", " ") if ex.get("created_at") else "—"
+            })
+        df_show = pd.DataFrame(history_rows)
+        styled_table(df_show)
 
-with t2:
-    matched = get_exchange_offers(status="matched")
-    if matched:
-        for m in matched:
-            st.markdown(f"""<div style='background:rgba(0,0,0,0.3);border-left:3px solid #00D2AA;padding:15px;margin-bottom:10px;border-radius:8px;'>
-                <div style='display:flex;justify-content:space-between;align-items:center;'>
-                    <div>
-                        <b style='color:white;font-size:1.1rem;'>{m.get('offering_name')} ↔ {m.get('receiving_name')}</b><br>
-                        <span style='color:#95A5A6;font-size:0.85rem;'>Exchanging <b>{m.get('offered_blood_group')}</b> for <b>{m.get('requested_blood_group')}</b> ({m.get('units')} units)</span>
-                    </div>
-                    <span class='badge badge-safe'>MATCHED ✓</span>
-                </div>
-            </div>""", unsafe_allow_html=True)
-    else:
-        st.info("No active matches.")
-
-st.markdown("</div>", unsafe_allow_html=True)

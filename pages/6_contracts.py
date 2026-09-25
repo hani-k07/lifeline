@@ -1,170 +1,136 @@
-import streamlit as st
-import time
+# pages/6_contracts.py
+"""Vendor Contracts — LIFELINE v6.0"""
+from __future__ import annotations
 
-from utils.supabase_client import (
-    get_active_contracts, mark_contract_returned, add_audit_log,
-    get_hospital_by_id, get_patient_by_id, get_blood_units
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+
+st.set_page_config(page_title="Contracts — LIFELINE", layout="wide")
+
+from utils.styles import (
+    inject_all_styles, get_theme, section_header, alert_banner,
+    blood_badge, status_pill, styled_table, metric_card,
 )
-from utils.dsa_bridge import sort_contracts
-from utils.pdf_generator import generate_contract
-from utils.helpers import format_countdown
+from utils.sidebar import render_sidebar
+from utils.database import (
+    get_all_hospitals, get_contracts, add_contract, add_audit_log,
+)
+from dsa_engine import BLOOD_GROUPS
 
 if not st.session_state.get("logged_in"):
-    st.warning("Please login from the main page.")
+    st.switch_page("app.py")
     st.stop()
 
-import datetime
-from utils.sidebar import render_sidebar
+inject_all_styles(get_theme())
 render_sidebar()
 
-def get_contract_time_status(end_date_str):
-    """
-    Given an end_date string (ISO format), return:
-      - days_remaining (int)
-      - status_label (str): "EXPIRED", "CRITICAL", "WARNING", "OK"
-      - color (str): hex color for display
-    """
-    try:
-        end_date = datetime.datetime.fromisoformat(end_date_str)
-    except:
-        return None, "UNKNOWN", "#95A5A6"
-    
-    now  = datetime.datetime.now()
-    diff = end_date - now
-    days = diff.days
-    
-    if days < 0:
-        return days, "EXPIRED",  "#E74C3C"
-    elif days <= 1:
-        return days, "CRITICAL", "#E74C3C"
-    elif days <= 3:
-        return days, "WARNING",  "#F39C12"
+_role = st.session_state.get("user_role", "")
+_hosp_id = st.session_state.get("user_hospital_id")
+_uid = int(st.session_state.get("user_id", 0))
+_hosp_name = st.session_state.get("user_hospital_name", "")
+
+# ── Title Block ──
+st.markdown("""
+<div style="margin-bottom:24px">
+    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Vendor Contracts</h1>
+    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
+        Manage blood supply contracts with vendors and partner organizations
+    </p>
+</div>""", unsafe_allow_html=True)
+
+if _role == "admin":
+    hospitals = get_all_hospitals()
+    hosp_map = {h["name"]: h["id"] for h in hospitals}
+    sel_name = st.selectbox("Hospital", list(hosp_map.keys()))
+    sel_hosp_id = hosp_map[sel_name]
+else:
+    sel_hosp_id = _hosp_id
+    sel_name = _hosp_name
+
+tab1, tab2 = st.tabs(["Active Contracts", "New Contract"])
+
+with tab1:
+    contracts = get_contracts(sel_hosp_id if _role != "admin" else None)
+    if not contracts:
+        alert_banner("No contracts found. Create a contract using the 'New Contract' tab.", "info")
     else:
-        return days, "OK",       "#00D2AA"
+        # Metrics
+        active = [c for c in contracts if c.get("status") == "ACTIVE"]
+        today = datetime.today()
+        expiring_soon = []
+        for c in active:
+            if c.get("contract_end"):
+                try:
+                    end_dt = datetime.strptime(c["contract_end"][:10], "%Y-%m-%d")
+                    if 0 <= (end_dt - today).days <= 30:
+                        expiring_soon.append(c)
+                except Exception:
+                    pass
 
-role    = st.session_state.get("user_role")
-hosp_id = st.session_state.get("hospital_id") if role != "super_admin" else None
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(metric_card("Total Contracts", f"{len(contracts)}", icon="Contracts", variant="default"), unsafe_allow_html=True)
+        with c2:
+            st.markdown(metric_card("Active Contracts", f"{len(active)}", icon="Active", variant="success"), unsafe_allow_html=True)
+        with c3:
+            st.markdown(metric_card("Expiring Soon", f"{len(expiring_soon)}", icon="Expiring", variant="critical" if expiring_soon else "default"), unsafe_allow_html=True)
 
-from utils.styles import get_glass_css
-st.markdown(get_glass_css(), unsafe_allow_html=True)
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-st.markdown("<h1 style='color:white;'><span style='color:#9B59B6;'>📄</span> Contract Management</h1>", unsafe_allow_html=True)
+        if expiring_soon:
+            alert_banner(f"{len(expiring_soon)} contract(s) expiring within 30 days!", "warning")
 
-all_contracts = get_active_contracts()
-if hosp_id:
-    contracts = [c for c in all_contracts if c.get("lending_hospital_id")==hosp_id or c.get("borrowing_hospital_id")==hosp_id]
-else:
-    contracts = all_contracts
+        history_rows = []
+        for c in contracts:
+            history_rows.append({
+                "Hospital": c.get("hospital_name", "—"),
+                "Vendor": c.get("vendor_name", "—"),
+                "Blood Group": blood_badge(c.get("blood_group", "?")),
+                "Units/Month": f"{c.get('units_per_month', 0)}u",
+                "Start": c.get("contract_start", "")[:10],
+                "End": c.get("contract_end", "")[:10],
+                "Status": status_pill(c.get("status", "PENDING"))
+            })
+        df_show = pd.DataFrame(history_rows)
+        styled_table(df_show)
 
-# ── BREACH BANNER ───────────────────────────────
-breaches = [c for c in contracts if c.get("hours_remaining", 99) < 2]
-if breaches:
-    for b in breaches:
-        contact = "Unknown"
-        # If we are lending, show borrowing contact
-        if hosp_id and b.get("lending_hospital_id") == hosp_id:
-            bh = get_hospital_by_id(b.get("borrowing_hospital_id"))
-            contact = bh.get("contact_number") if bh else "Unknown"
-        st.markdown(f"""<div class='alert-critical' style='animation:pulse-red 2s infinite;'>
-            <h3 style='margin:0;color:#ff416c;'>🚨 URGENT: CONTRACT BREACH IMMINENT</h3>
-            <p style='margin:5px 0 0 0;'>Ticket <b>{b.get('ticket_id')}</b> must be returned in {format_countdown(b.get('seconds_remaining',0))}. Contact partner hospital at: <b>{contact}</b></p>
-        </div>""", unsafe_allow_html=True)
-
-# ── ACTIVE CONTRACTS ────────────────────────────
-st.markdown("<div class='section-header'>ACTIVE TRANSFERS & EXCHANGES</div>", unsafe_allow_html=True)
-
-sorted_c = sort_contracts(contracts)
-
-if sorted_c:
-    # Use st.empty to update countdown once (Streamlit looping restricts real-time updates without rerun)
-    container = st.empty()
-    
-    # We render the contracts once. For a real live ticking clock, we would use a while loop with time.sleep(1),
-    # but in Streamlit this blocks other interactions. We render once per interaction.
-    html = ""
-    for c in sorted_c:
-        tid = c.get("ticket_id")
-        hrs = c.get("hours_remaining", 99)
-        secs= c.get("seconds_remaining", 0)
-        deadline = c.get("return_deadline", "")
+with tab2:
+    if _role == "staff":
+        alert_banner("Staff cannot create contracts. Contact your Hospital Admin.", "danger")
+    else:
+        section_header("New Vendor Contract")
         
-        # New Status Badge Logic
-        days_rem, status_lbl, status_color = get_contract_time_status(deadline)
-        if days_rem is not None:
-            if days_rem < 0:
-                badge_label = f"⛔ Expired {abs(days_rem)} days ago"
-            elif days_rem == 0:
-                badge_label = "⚠️ Expires TODAY"
-            else:
-                badge_label = f"⏳ {days_rem} days remaining"
-            
-            status_map = {"EXPIRED": "231,76,60", "CRITICAL": "231,76,60", "WARNING": "243,156,18", "OK": "0,210,170"}
-            rgb = status_map.get(status_lbl, "149,165,166")
-            badge_html = f"""
-            <div style='
-                background:rgba({rgb},0.15);
-                border:1px solid {status_color};
-                border-radius:8px;
-                padding:4px 10px;
-                display:inline-block;
-                color:{status_color};
-                font-size:0.75rem;
-                font-weight:600;
-                margin-top:8px;
-            '>{badge_label}</div>
-            """
-        else:
-            badge_html = ""
-
-        border = "#ff416c" if hrs < 6 else ("#FFB347" if hrs < 12 else "#00D2AA")
-        cd_cls = "countdown-red" if hrs < 6 else ("countdown-amber" if hrs < 12 else "countdown-green")
-        prog   = max(0, min(100, ((24 - hrs) / 24) * 100))
+        error_msg = None
+        success_msg = None
         
-        html += f"""<div class='glass-card' style='border-left:4px solid {border};padding:15px;margin-bottom:15px;'>
-            <div style='display:flex;justify-content:space-between;align-items:center;'>
-                <div style='flex:1;'>
-                    <code style='color:white;font-size:1.2rem;background:rgba(255,255,255,0.1);padding:4px 8px;border-radius:4px;'>{tid}</code>
-                    <span style='margin-left:15px;color:#95A5A6;'>{c.get('lending_hospital_name')} ➔ {c.get('borrowing_hospital_name')}</span>
-                    <br>{badge_html}
-                </div>
-                <div style='flex:1;text-align:center;'>
-                    <b style='color:white;font-size:1.1rem;'>{c.get('blood_group')} {c.get('component')}</b> ({c.get('units')} Units)
-                </div>
-                <div style='flex:1;text-align:right;'>
-                    <div class='countdown {cd_cls}'>{format_countdown(secs)}</div>
-                    <div style='font-size:0.7rem;color:#95A5A6;'>remaining</div>
-                </div>
-            </div>
-            <div style='margin-top:15px;background:rgba(0,0,0,0.4);border-radius:4px;height:6px;overflow:hidden;'>
-                <div style='width:{prog}%;background:{border};height:100%;transition:width 1s;'></div>
-            </div>
-        </div>"""
-    container.markdown(html, unsafe_allow_html=True)
-    
-    # Action buttons per contract
-    for c in sorted_c:
-        tid = c.get("ticket_id")
-        col1, col2, col3 = st.columns([2, 2, 6])
-        with col1:
-            if st.button(f"Mark Returned ✓", key=f"ret_{tid}", use_container_width=True):
-                mark_contract_returned(tid)
-                add_audit_log("CONTRACT_RETURNED", st.session_state["email"], hosp_id, "contract", tid, {"status":"returned"})
-                st.success(f"Contract {tid} closed.")
-                time.sleep(1)
-                st.rerun()
-        with col2:
-            # Generate PDF data
-            # In a real app we'd fetch full details, here we mock some for the PDF
-            pdf_data = {
-                "ticket_id": tid, "status": c.get("status"),
-                "lending_hospital_name": c.get("lending_hospital_name"),
-                "borrowing_hospital_name": c.get("borrowing_hospital_name"),
-                "blood_group": c.get("blood_group"), "component": c.get("component"),
-                "units": c.get("units"), "issue_time": c.get("issue_time"),
-                "return_deadline": c.get("return_deadline"), "is_exchange": c.get("is_exchange")
-            }
-            pdf_bytes = generate_contract(pdf_data)
-            st.download_button("Download PDF ⬇", data=pdf_bytes, file_name=f"{tid}.pdf", mime="application/pdf", key=f"pdf_{tid}", use_container_width=True)
-        st.markdown("<hr style='border-color:rgba(255,255,255,0.05);'>", unsafe_allow_html=True)
-else:
-    st.info("No active contracts.")
+        with st.form("contract_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                vendor = st.text_input("Vendor / Supplier Name *", placeholder="e.g. Punjab Blood Service")
+                blood_grp = st.selectbox("Blood Group", BLOOD_GROUPS)
+                units_month = st.number_input("Units per Month", min_value=1, max_value=1000, value=50)
+            with col2:
+                start = st.date_input("Contract Start Date", value=datetime.today())
+                end = st.date_input("Contract End Date", value=datetime.today() + timedelta(days=365))
+
+            submitted = st.form_submit_button("Create Contract", use_container_width=True)
+            if submitted:
+                if not vendor:
+                    error_msg = "Vendor name is required."
+                elif start >= end:
+                    error_msg = "End date must be after start date."
+                else:
+                    ok = add_contract(sel_hosp_id, vendor, blood_grp, units_month, str(start), str(end))
+                    if ok:
+                        add_audit_log("CONTRACT_CREATED", f"Contract with {vendor} for {blood_grp} at {sel_name}", _uid)
+                        success_msg = f"Contract with {vendor} created successfully!"
+                    else:
+                        error_msg = "Failed to create contract."
+
+        if success_msg:
+            alert_banner(success_msg, "success")
+            st.rerun()
+        elif error_msg:
+            alert_banner(error_msg, "danger")
+

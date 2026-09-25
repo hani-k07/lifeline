@@ -1,177 +1,189 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import time
+# pages/8_analytics.py
+"""Analytics & Reporting — LIFELINE v6.0"""
+from __future__ import annotations
 
-from utils.supabase_client import get_dashboard_stats, get_blood_units, get_hospitals
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+from datetime import datetime
+import random
+
+st.set_page_config(page_title="Analytics — LIFELINE", layout="wide")
+
+from utils.styles import (
+    inject_all_styles, get_theme, section_header, alert_banner,
+    blood_badge, status_pill, styled_table, metric_card,
+)
+from utils.sidebar import render_sidebar
+from utils.database import (
+    get_all_hospitals, get_blood_units, get_donors,
+    get_transfusions, get_blood_requests, get_blood_summary,
+)
+from dsa_engine import BLOOD_GROUPS, forecast_demand, detect_shortage_risk, build_hospital_graph
 
 if not st.session_state.get("logged_in"):
-    st.warning("Please login from the main page.")
+    st.switch_page("app.py")
     st.stop()
 
-# Access Control
-role = st.session_state.get("user_role", "staff")
-if role not in ["super_admin", "hospital_admin"]:
-    st.markdown("""
-    <style>
-    .glass-card {
-        background: rgba(20,20,35,0.7);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 16px;
-        text-align: center;
-    }
-    </style>
-    <div class='glass-card' style='border-color:rgba(255,65,108,0.4);'>
-        <h2 style='color:white;'>🚫 Access Denied</h2>
-        <p style='color:#95A5A6;'>You do not have permission to view this page. Hospital Admin or Super Admin only.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
-
-from utils.sidebar import render_sidebar
+inject_all_styles(get_theme())
 render_sidebar()
 
+_role = st.session_state.get("user_role", "")
+_hosp_id = st.session_state.get("user_hospital_id")
+_uid = int(st.session_state.get("user_id", 0))
+_hosp_name = st.session_state.get("user_hospital_name", "")
 
-from utils.styles import get_glass_css
-st.markdown(get_glass_css(), unsafe_allow_html=True)
+# ── Title Block ──
+st.markdown("""
+<div style="margin-bottom:24px">
+    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Analytics & Intelligence</h1>
+    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
+        Demand forecasting, shortage prediction, and network analysis
+    </p>
+</div>""", unsafe_allow_html=True)
 
-st.markdown("<h1 style='color:white;'><span style='color:#3498DB;'>📈</span> Analytics & Intelligence</h1>", unsafe_allow_html=True)
+if _role == "admin":
+    hospitals = get_all_hospitals()
+    hosp_map = {"All Hospitals": None}
+    for h in hospitals:
+        hosp_map[h["name"]] = h["id"]
+    sel_name = st.selectbox("Hospital", list(hosp_map.keys()))
+    sel_hosp_id = hosp_map[sel_name]
+else:
+    sel_hosp_id = _hosp_id
+    sel_name = _hosp_name
 
-# ── KPI CARDS ───────────────────────────────────
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-def stat_card(label, val, color):
-    return f"<div class='metric-card' style='border-left-color:{color};'><div class='metric-label'>{label}</div><div class='metric-value'>{val}</div></div>"
-c1.markdown(stat_card("Wastage Rate", "1.2%", "#00D2AA"), unsafe_allow_html=True)
-c2.markdown(stat_card("Avg Response", "14 min", "#3498DB"), unsafe_allow_html=True)
-c3.markdown(stat_card("Contract Compl.", "98.5%", "#00D2AA"), unsafe_allow_html=True)
-c4.markdown(stat_card("Safe Screen", "85.0%", "#FFB347"), unsafe_allow_html=True)
-c5.markdown(stat_card("Exchange Eff.", "92.0%", "#00D2AA"), unsafe_allow_html=True)
-c6.markdown(stat_card("Network Util.", "76.4%", "#ff416c"), unsafe_allow_html=True)
-st.markdown("<br>", unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["Inventory Overview", "Demand Forecast", "Network Map"])
 
-dark = dict(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(family="Outfit", color="white"), margin=dict(l=0,r=0,t=30,b=0))
-stats = get_dashboard_stats()
+with tab1:
+    units = get_blood_units(sel_hosp_id)
+    donors = get_donors(sel_hosp_id)
+    transfusions = get_transfusions(sel_hosp_id)
 
-# ── CHARTS ROW 1 ────────────────────────────────
-r1c1, r1c2 = st.columns(2)
-with r1c1:
-    st.markdown("<div class='glass-card'><div class='section-header'>BLOOD GROUP INVENTORY</div>", unsafe_allow_html=True)
-    bg_data = stats.get("units_by_group",{})
-    df_bg = pd.DataFrame(list(bg_data.items()), columns=["Group","Count"])
-    if not df_bg.empty:
-        fig1 = px.bar(df_bg, x="Group", y="Count", color="Count", color_continuous_scale=["#302b63","#ff416c"])
-        fig1.update_layout(**dark, coloraxis_showscale=False, height=250)
-        st.plotly_chart(fig1, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    total_u = sum(u["units"] for u in units)
+    group_types = len(set(u["blood_group"] for u in units))
 
-with r1c2:
-    st.markdown("<div class='glass-card'><div class='section-header'>COMPONENT DISTRIBUTION</div>", unsafe_allow_html=True)
-    comp_data = stats.get("units_by_component",{})
-    df_comp = pd.DataFrame(list(comp_data.items()), columns=["Comp","Count"])
-    if not df_comp.empty:
-        fig2 = px.pie(df_comp, values="Count", names="Comp", hole=0.6, color_discrete_sequence=["#ff416c","#FFB347","#00D2AA","#3498DB","#9B59B6"])
-        fig2.update_layout(**dark, height=250)
-        st.plotly_chart(fig2, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(metric_card("Total Blood Units", f"{total_u}", icon="Units", variant="default"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(metric_card("Blood Group Types", f"{group_types}", icon="Types", variant="default"), unsafe_allow_html=True)
+    with c3:
+        st.markdown(metric_card("Registered Donors", f"{len(donors)}", icon="Donors", variant="success"), unsafe_allow_html=True)
+    with c4:
+        st.markdown(metric_card("Transfusions", f"{len(transfusions)}", icon="Transfusions", variant="default"), unsafe_allow_html=True)
 
-# ── CHARTS ROW 2 ────────────────────────────────
-r2c1, r2c2 = st.columns(2)
-with r2c1:
-    st.markdown("<div class='glass-card'><div class='section-header'>HOSPITAL AVAILABILITY HEATMAP</div>", unsafe_allow_html=True)
-    units = get_blood_units()
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
     if units:
-        df_u = pd.DataFrame(units)
-        hm = pd.crosstab(df_u["hospital_name"], df_u["blood_group"])
-        fig3 = px.imshow(hm, color_continuous_scale=["#1a1a2e","#ff416c"])
-        fig3.update_layout(**dark, coloraxis_showscale=False, height=250)
-        st.plotly_chart(fig3, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        # By blood group
+        summary = {}
+        for u in units:
+            bg = u["blood_group"]
+            summary[bg] = summary.get(bg, 0) + u["units"]
 
-with r2c2:
-    st.markdown("<div class='glass-card'><div class='section-header'>HOSPITAL INVENTORY COMPARISON</div>", unsafe_allow_html=True)
-    hospitals = get_hospitals()
-    h_data = [{"Hospital": h["name"][:15], "Units": len([u for u in units if u["hospital_id"]==h["id"]])} for h in hospitals]
-    df_h = pd.DataFrame(h_data)
-    fig4 = px.bar(df_h, x="Hospital", y="Units", color="Units", color_continuous_scale=["#302b63","#00D2AA"])
-    fig4.update_layout(**dark, coloraxis_showscale=False, height=250)
-    st.plotly_chart(fig4, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        df_bg = pd.DataFrame(list(summary.items()), columns=["Blood Group", "Units"]).sort_values("Units", ascending=False)
+        fig1 = px.bar(df_bg, x="Blood Group", y="Units", color="Units",
+                      color_continuous_scale=["#1a0533", "#ff416c"],
+                      template="plotly_dark", title="Stock by Blood Group")
+        fig1.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                           coloraxis_showscale=False, height=320, margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig1, use_container_width=True)
 
-# ── OPERATIONAL RISK MATRIX ───────────────────────────────────
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>OPERATIONAL RISK MATRIX</div>", unsafe_allow_html=True)
-
-risks = [
-    {"Risk": "Wrong blood transfusion",  "Probability": 0.3, "Severity": 10},
-    {"Risk": "Cold chain failure",        "Probability": 0.5, "Severity": 9},
-    {"Risk": "Contract breach",           "Probability": 0.3, "Severity": 8},
-    {"Risk": "Data integrity issue",      "Probability": 0.4, "Severity": 10},
-    {"Risk": "Staff shortage",            "Probability": 0.5, "Severity": 6},
-    {"Risk": "Network downtime",          "Probability": 0.2, "Severity": 9},
-    {"Risk": "Inventory stockout (O+)",   "Probability": 0.6, "Severity": 8},
-]
-df_risk = pd.DataFrame(risks)
-
-c1, c2 = st.columns([4, 6])
-with c1:
-    edited_df = st.data_editor(df_risk, hide_index=True, use_container_width=True)
-with c2:
-    edited_df["Score"] = edited_df["Probability"] * edited_df["Severity"]
-    edited_df["Level"] = edited_df["Score"].apply(
-        lambda x: "High" if x > 3.5 else ("Medium" if x > 2.0 else "Low")
-    )
-    fig_r = px.scatter(
-        edited_df, x="Probability", y="Severity",
-        size="Score", color="Level", hover_name="Risk",
-        color_discrete_map={"High": "#ff416c", "Medium": "#FFB347", "Low": "#00D2AA"}
-    )
-    fig_r.update_layout(
-        **dark,
-        xaxis_title="Probability (0–1)",
-        yaxis_title="Severity (1–10)"
-    )
-    st.plotly_chart(fig_r, use_container_width=True)
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ── NETWORK HEALTH SUMMARY ────────────────────────────────────
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<div class='section-header'>NETWORK HEALTH SUMMARY</div>", unsafe_allow_html=True)
-
-h_data_full = []
-for h in hospitals:
-    u_count  = len([u for u in units if u["hospital_id"] == h["id"]])
-    critical = sum(1 for u in units if u["hospital_id"] == h["id"] and u.get("days_to_expiry", 99) <= 3)
-    temp_err = sum(1 for u in units if u["hospital_id"] == h["id"] and u.get("storage_temperature", 4) > 6.0)
-    if u_count == 0:
-        health = "Critical"
-    elif critical > 0 or temp_err > 0:
-        health = "Warning"
+        # Donut chart
+        fig2 = px.pie(df_bg, values="Units", names="Blood Group", hole=0.5,
+                      template="plotly_dark", title="Distribution")
+        fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=320, margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig2, use_container_width=True)
     else:
-        health = "Good"
-    h_data_full.append({
-        "Hospital":      h["name"],
-        "Units":         u_count,
-        "Expiring Soon": critical,
-        "Temp Alerts":   temp_err,
-        "Status":        health,
-    })
+        alert_banner("No inventory data to display.", "info")
 
-df_health = pd.DataFrame(h_data_full)
-for _, row in df_health.iterrows():
-    color = "#00D2AA" if row["Status"] == "Good" else ("#FFB347" if row["Status"] == "Warning" else "#ff416c")
-    st.markdown(f"""
-    <div style='display:flex;justify-content:space-between;align-items:center;
-        padding:10px 16px;border-left:3px solid {color};
-        background:rgba(0,0,0,0.2);border-radius:0 8px 8px 0;margin-bottom:8px;'>
-        <div style='color:white;font-weight:600;'>{row['Hospital']}</div>
-        <div style='display:flex;gap:24px;'>
-            <span style='color:#95A5A6;font-size:0.85rem;'>Units: <b style='color:white'>{row['Units']}</b></span>
-            <span style='color:#95A5A6;font-size:0.85rem;'>Expiring: <b style='color:#FFB347'>{row['Expiring Soon']}</b></span>
-            <span style='color:#95A5A6;font-size:0.85rem;'>Temp Alerts: <b style='color:#ff416c'>{row['Temp Alerts']}</b></span>
-            <span class='badge {"badge-safe" if row["Status"]=="Good" else ("badge-caution" if row["Status"]=="Warning" else "badge-critical")}'>{row['Status']}</span>
-        </div>
-    </div>""", unsafe_allow_html=True)
-st.markdown("</div>", unsafe_allow_html=True)
+with tab2:
+    section_header("7-Day Demand Forecast", "Weighted Moving Average")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fg_bg = st.selectbox("Blood Group", BLOOD_GROUPS, key="fg_bg")
+    with col2:
+        fg_hosp = sel_hosp_id if sel_hosp_id else (get_all_hospitals()[0]["id"] if get_all_hospitals() else None)
+
+    if fg_hosp:
+        # Mock historical data (seeded deterministically)
+        random.seed((fg_hosp or 0) + (ord(fg_bg[0]) if fg_bg else 0))
+        historical = [round(random.uniform(1.5, 8.0), 1) for _ in range(14)]
+        current_stock_list = get_blood_units(fg_hosp)
+        current_stock = sum(u["units"] for u in current_stock_list if u["blood_group"] == fg_bg)
+
+        forecast = forecast_demand(historical, window=7, forecast_days=7)
+        risk = detect_shortage_risk(current_stock, forecast)
+
+        # Metrics
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(metric_card("Current Stock", f"{current_stock} u", icon="Stock", variant="default"), unsafe_allow_html=True)
+        with c2:
+            st.markdown(metric_card("7-Day Avg Forecast", f"{sum(forecast)/7:.1f} u/day", icon="Forecast", variant="default"), unsafe_allow_html=True)
+        with c3:
+            st.markdown(metric_card("Risk Level", risk["risk_level"], icon="Risk", variant="critical" if risk["risk_level"] in ("CRITICAL", "HIGH") else "success"), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+        # Chart
+        days_hist = [f"Day -{14-i}" for i in range(14)]
+        days_fore = [f"Day +{i+1}" for i in range(7)]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=days_hist, y=historical, name="Historical", line=dict(color="#64b5f6", width=2)))
+        fig.add_trace(go.Scatter(x=days_fore, y=forecast, name="Forecast (WMA)", line=dict(color="#ff416c", width=2, dash="dash")))
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          template="plotly_dark", height=350,
+                          title=f"Usage Forecast — {fg_bg} at {sel_name}",
+                          xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)"))
+        st.plotly_chart(fig, use_container_width=True)
+
+        if risk["risk_level"] in ("CRITICAL", "HIGH"):
+            alert_banner(f"Reorder {risk['recommended_reorder']} units of {fg_bg} — stockout in {risk['days_until_stockout']} days!", "danger")
+        elif risk["risk_level"] == "MEDIUM":
+            alert_banner(f"Monitor stock — consider ordering {risk['recommended_reorder']} additional units.", "warning")
+        else:
+            alert_banner(f"Stock levels are adequate. Estimated {risk['days_until_stockout']}+ days of supply.", "success")
+
+with tab3:
+    section_header("Hospital Network Map", "Dijkstra Graph")
+    hospitals = get_all_hospitals()
+
+    if hospitals:
+        # Scatter map
+        df_h = pd.DataFrame(hospitals)
+        df_h["stock"] = df_h["id"].apply(lambda hid: sum(u["units"] for u in get_blood_units(hid)))
+        df_h["size"] = df_h["stock"].apply(lambda s: max(10, min(40, s / 10)))
+
+        fig_map = px.scatter_mapbox(
+            df_h, lat="latitude", lon="longitude",
+            hover_name="name", hover_data={"stock": True, "phone": True},
+            size="size", color="stock",
+            color_continuous_scale=["#ff4444", "#ffaa00", "#00c853"],
+            mapbox_style="carto-darkmatter",
+            zoom=11, center={"lat": 31.52, "lon": 74.34},
+            title="Lahore Hospital Blood Network",
+            template="plotly_dark",
+        )
+        fig_map.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=500,
+                              margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig_map, use_container_width=True)
+
+        # Distance matrix
+        with st.expander("Haversine Distance Matrix (km)"):
+            graph = build_hospital_graph(hospitals)
+            hosp_names = [h["name"] for h in hospitals]
+            hosp_ids = [h["id"] for h in hospitals]
+            dist_data = []
+            for hid in hosp_ids:
+                dists, _ = graph.dijkstra(hid)
+                row = {graph.nodes[t]["name"]: round(dists.get(t, 0), 1) for t in hosp_ids}
+                dist_data.append(row)
+            df_dist = pd.DataFrame(dist_data, index=hosp_names)
+            styled_table(df_dist)
+    else:
+        alert_banner("No hospitals in the network.", "info")
+

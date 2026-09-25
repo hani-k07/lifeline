@@ -1,128 +1,182 @@
+# pages/7_transfusion.py
+"""Transfusion Monitoring — LIFELINE v6.0"""
+from __future__ import annotations
+
 import streamlit as st
-import sqlite3
-import uuid
-import json
+import pandas as pd
 from datetime import datetime
 
-try:
-    from utils.styles import get_glass_css
-except ImportError:
-    def get_glass_css(): return ""
+st.set_page_config(page_title="Transfusion — LIFELINE", layout="wide")
 
-from utils.ai_engine import TransfusionMonitorAgent
-from utils.repository import DatabaseManager
+from utils.styles import (
+    inject_all_styles, get_theme, section_header, alert_banner,
+    blood_badge, status_pill, styled_table, metric_card,
+)
+from utils.sidebar import render_sidebar
+from utils.database import (
+    get_all_hospitals, get_transfusions, add_transfusion,
+    get_donors, add_audit_log, update_blood_units,
+)
+from dsa_engine import BLOOD_GROUPS, get_compatible_donors
 
-if st.session_state.get("user_role") not in ["staff", "hospital_admin", "super_admin"]:
-    st.error("Access Denied")
+if not st.session_state.get("logged_in"):
+    st.switch_page("app.py")
     st.stop()
 
-hospital_id = st.session_state.get("hospital_id", "UNKNOWN")
+inject_all_styles(get_theme())
+render_sidebar()
 
-st.markdown(get_glass_css(), unsafe_allow_html=True)
-st.title("Live Transfusion Monitor")
+_role = st.session_state.get("user_role", "")
+_hosp_id = st.session_state.get("user_hospital_id")
+_uid = int(st.session_state.get("user_id", 0))
+_hosp_name = st.session_state.get("user_hospital_name", "")
 
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<h2 class='section-header'>Patient & Unit Selection</h2>", unsafe_allow_html=True)
+# ── Title Block ──
+st.markdown("""
+<div style="margin-bottom:24px">
+    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Transfusion Management</h1>
+    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
+        Record transfusions and monitor patient reactions
+    </p>
+</div>""", unsafe_allow_html=True)
 
-patients = []
-try:
-    with DatabaseManager() as db:
-        patients = db.execute("SELECT id, name FROM patients WHERE hospital_id = ?", (hospital_id,))
-except Exception as e:
-    st.warning("Could not load patients from DB. Proceeding with manual entry mode.")
+if _role == "admin":
+    hospitals = get_all_hospitals()
+    hosp_map = {h["name"]: h["id"] for h in hospitals}
+    sel_name = st.selectbox("Hospital", list(hosp_map.keys()))
+    sel_hosp_id = hosp_map[sel_name]
+else:
+    sel_hosp_id = _hosp_id
+    sel_name = _hosp_name
 
-patient_options = {p['id']: p['name'] for p in patients} if patients else {}
+tab1, tab2, tab3 = st.tabs(["Transfusion Log", "Record Transfusion", "Reaction Monitor"])
 
-col_sel1, col_sel2 = st.columns(2)
-with col_sel1:
-    selected_patient_id = st.selectbox("Select Patient", options=list(patient_options.keys()), format_func=lambda x: patient_options.get(x, x), key="trans_patient")
-with col_sel2:
-    blood_unit_id = st.text_input("Blood Unit ID", key="trans_unit")
-st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-st.markdown("<h2 class='section-header'>Vitals Entry</h2>", unsafe_allow_html=True)
-
-col_pre, col_post = st.columns(2)
-with col_pre:
-    st.markdown("### Pre-Transfusion")
-    st.number_input("Pre BP Systolic", min_value=50, max_value=250, value=120, key="pre_sys")
-    st.number_input("Pre BP Diastolic", min_value=30, max_value=150, value=80, key="pre_dia")
-    st.number_input("Pre Pulse", min_value=30, max_value=200, value=75, key="pre_pulse")
-    st.number_input("Pre Temp (°C)", min_value=30.0, max_value=45.0, value=37.0, step=0.1, key="pre_temp")
-    st.number_input("Pre O2 Sat (%)", min_value=50, max_value=100, value=98, key="pre_o2")
-
-with col_post:
-    st.markdown("### Post-Transfusion")
-    st.number_input("Post BP Systolic", min_value=50, max_value=250, value=120, key="post_sys")
-    st.number_input("Post BP Diastolic", min_value=30, max_value=150, value=80, key="post_dia")
-    st.number_input("Post Pulse", min_value=30, max_value=200, value=75, key="post_pulse")
-    st.number_input("Post Temp (°C)", min_value=30.0, max_value=45.0, value=37.0, step=0.1, key="post_temp")
-    st.number_input("Post O2 Sat (%)", min_value=50, max_value=100, value=98, key="post_o2")
-
-analyze_btn = st.button("ANALYZE VITALS")
-st.markdown("</div>", unsafe_allow_html=True)
-
-if analyze_btn:
-    pre_dict = {
-        "bp_sys": st.session_state.pre_sys, "bp_dia": st.session_state.pre_dia, 
-        "pulse": st.session_state.pre_pulse, "temp_c": st.session_state.pre_temp, "o2_sat": st.session_state.pre_o2
-    }
-    post_dict = {
-        "bp_sys": st.session_state.post_sys, "bp_dia": st.session_state.post_dia, 
-        "pulse": st.session_state.post_pulse, "temp_c": st.session_state.post_temp, "o2_sat": st.session_state.post_o2
-    }
-    
-    agent = TransfusionMonitorAgent()
-    try:
-        report = agent.analyze(pre_dict, post_dict)
-        st.session_state["transfusion_report"] = report
-    except Exception as e:
-        st.warning(f"AI Engine Failed: {e}")
-        st.session_state.pop("transfusion_report", None)
-
-if st.session_state.get("transfusion_report"):
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    st.markdown("<h2 class='section-header'>Analysis Report</h2>", unsafe_allow_html=True)
-    
-    report = st.session_state["transfusion_report"]
-    reaction = report.get("reaction", "UNKNOWN")
-    severity = report.get("severity", "NORMAL")
-    action = report.get("action", "")
-    deltas = report.get("deltas", {})
-    
-    if severity == "CRITICAL":
-        st.error(f"🚨 **{reaction} DETECTED! STOP TRANSFUSION IMMEDIATELY** 🚨")
-    elif severity == "WARNING":
-        st.warning(f"⚠️ **{reaction} DETECTED!**")
+with tab1:
+    transfusions = get_transfusions(sel_hosp_id)
+    if not transfusions:
+        alert_banner("No transfusion records yet.", "info")
     else:
-        st.success(f"✅ **{reaction} - Vitals Stable**")
-        
-    st.markdown(f"**Action Required:** {action}")
-    
-    st.markdown("### Vitals Delta")
-    table_html = "<table class='data-table'><tr><th>Metric</th><th>Pre</th><th>Post</th><th>Delta</th></tr>"
-    table_html += f"<tr><td>BP Sys</td><td>{st.session_state.pre_sys}</td><td>{st.session_state.post_sys}</td><td>{deltas.get('bp_drop', 0) * -1:.2f}</td></tr>"
-    table_html += f"<tr><td>Pulse</td><td>{st.session_state.pre_pulse}</td><td>{st.session_state.post_pulse}</td><td>{deltas.get('pulse_rise', 0):.2f}</td></tr>"
-    table_html += f"<tr><td>Temp</td><td>{st.session_state.pre_temp}</td><td>{st.session_state.post_temp}</td><td>{deltas.get('temp_rise', 0):.2f}</td></tr>"
-    table_html += f"<tr><td>O2 Sat</td><td>{st.session_state.pre_o2}</td><td>{st.session_state.post_o2}</td><td>{deltas.get('o2_drop', 0) * -1:.2f}</td></tr>"
-    table_html += "</table>"
-    st.markdown(table_html, unsafe_allow_html=True)
-    
-    if st.button("LOG REACTION TO DATABASE"):
-        try:
-            with DatabaseManager() as db:
-                record_id = str(uuid.uuid4())
-                patient_id_val = st.session_state.trans_patient if st.session_state.trans_patient else "UNKNOWN"
-                unit_id_val = st.session_state.trans_unit if st.session_state.trans_unit else "UNKNOWN"
-                
-                db.execute_write(
-                    "INSERT INTO transfusion_records (id, hospital_id, patient_id, blood_unit_id, reaction_type, severity, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (record_id, hospital_id, patient_id_val, unit_id_val, reaction, severity, json.dumps(deltas), datetime.utcnow().isoformat())
-                )
-            st.success("Transfusion record logged securely.")
-            del st.session_state["transfusion_report"]
-        except Exception as e:
-            st.error(f"Database error: {e}")
+        total_u = sum(t.get("units", 0) for t in transfusions)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(metric_card("Total Transfusions", f"{len(transfusions)}", icon="Transfusion", variant="default"), unsafe_allow_html=True)
+        with c2:
+            st.markdown(metric_card("Units Transfused", f"{total_u}", icon="Units", variant="success"), unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+        log_rows = []
+        for t in transfusions:
+            log_rows.append({
+                "Patient": t.get("patient_name", "—"),
+                "Blood Group": blood_badge(t.get("blood_group", "?")),
+                "Units": f"{t.get('units', 0)}u",
+                "Date/Time": t.get("transfused_at", "")[:16].replace("T", " "),
+                "Performed By": t.get("performed_by", "—"),
+                "Notes": t.get("notes", "—")
+            })
+        df_show = pd.DataFrame(log_rows)
+        styled_table(df_show)
+
+with tab2:
+    section_header("Record New Transfusion")
+
+    # Compatibility check helper
+    check_bg = st.selectbox("Patient Blood Group (for compatibility check)", BLOOD_GROUPS, key="compat_bg")
+    compatible = get_compatible_donors(check_bg)
+    
+    # We construct a compatibility description using blood_badge for styling
+    compat_badges_html = " ".join([blood_badge(c) for c in compatible])
+    st.markdown(f"""
+    <div style='margin-bottom:16px;'>
+        <div style='font-size:0.85rem;color:var(--text-secondary);margin-bottom:6px;'>Compatible Donor Groups:</div>
+        <div>{compat_badges_html}</div>
+    </div>""", unsafe_allow_html=True)
+
+    error_msg = None
+    success_msg = None
+
+    with st.form("transfusion_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            patient_name = st.text_input("Patient Name *")
+        with col2:
+            blood_grp = st.selectbox("Blood Group Used", BLOOD_GROUPS, key="t_bg",
+                                     index=BLOOD_GROUPS.index(check_bg))
+        with col3:
+            units = st.number_input("Units Transfused", min_value=1, max_value=20, value=1)
+
+        performed_by = st.text_input("Performed By (Physician / Nurse)")
+        notes = st.text_area("Clinical Notes", placeholder="Indications, observations, reaction notes...")
+
+        submitted = st.form_submit_button("Record Transfusion", use_container_width=True)
+        if submitted:
+            if not patient_name:
+                error_msg = "Patient name is required."
+            elif blood_grp not in compatible:
+                error_msg = f"Incompatibility Warning: {blood_grp} is NOT compatible with patient blood group {check_bg}!"
+            else:
+                ok = add_transfusion(sel_hosp_id, patient_name, blood_grp, units, performed_by, notes)
+                if ok:
+                    update_blood_units(sel_hosp_id, blood_grp, -units, f"Transfusion: {patient_name}", _uid)
+                    add_audit_log("TRANSFUSION", f"Transfused {units}u {blood_grp} to {patient_name} at {sel_name}", _uid)
+                    success_msg = f"Transfusion recorded for {patient_name}"
+
+        if success_msg:
+            alert_banner(success_msg, "success")
+            st.rerun()
+        elif error_msg:
+            alert_banner(error_msg, "danger")
+
+with tab3:
+    section_header("Transfusion Reaction Monitor", "Model-Based Reflex Agent")
+    st.caption("Enter pre and post-transfusion vitals to detect adverse reactions")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Pre-Transfusion Vitals:**")
+        pre_temp = st.number_input("Temperature (°C)", 35.0, 42.0, 36.8, key="pre_temp")
+        pre_bp = st.number_input("BP Systolic (mmHg)", 60, 200, 120, key="pre_bp")
+        pre_pulse = st.number_input("Pulse (bpm)", 40, 180, 75, key="pre_pulse")
+        pre_o2 = st.number_input("O₂ Saturation (%)", 70.0, 100.0, 99.0, key="pre_o2")
+
+    with col2:
+        st.markdown("**Post-Transfusion Vitals:**")
+        post_temp = st.number_input("Temperature (°C)", 35.0, 42.0, 37.0, key="post_temp")
+        post_bp = st.number_input("BP Systolic (mmHg)", 60, 200, 118, key="post_bp")
+        post_pulse = st.number_input("Pulse (bpm)", 40, 180, 78, key="post_pulse")
+        post_o2 = st.number_input("O₂ Saturation (%)", 70.0, 100.0, 98.0, key="post_o2")
+
+    if st.button("Analyse Reaction", use_container_width=True):
+        from utils.dsa_engine import transfusion_monitor
+        pre = {"temp": pre_temp, "bp_systolic": pre_bp, "pulse": pre_pulse, "o2_sat": pre_o2}
+        post = {"temp": post_temp, "bp_systolic": post_bp, "pulse": post_pulse, "o2_sat": post_o2}
+        result = transfusion_monitor({"pre": pre, "post": post})
+
+        reaction = result["reaction_type"]
+        severity = result["severity"]
+        action = result["action"]
+        alert_color = result.get("alert_color", "green")
+
+        dec_level = {"red": "danger", "amber": "warning", "green": "success"}.get(alert_color, "info")
+
+        st.markdown(f"""
+        <div class='glass-hero' style='margin-top:16px;'>
+            <h3 style='margin:0 0 10px;font-family:"Syne",sans-serif;'>Reflex Agent Analysis</h3>
+            <div style='display:flex;align-items:center;gap:12px;margin-bottom:12px;'>
+                {status_pill(reaction)}
+                <span style='font-size:0.9rem;color:var(--text-secondary);'>Severity: <strong>{severity}</strong></span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+        
+        # Action Banner
+        alert_banner(action, dec_level)
+        
+        st.markdown(f"""
+        <div style='margin-top:12px;font-size:0.82rem;color:var(--text-secondary);font-family:"JetBrains Mono",monospace;'>
+        ΔTemp: {result["deltas"]["temp_rise"]:+.1f}°C &nbsp;|&nbsp;
+        ΔBP: {result["deltas"]["bp_drop"]:+.0f} mmHg &nbsp;|&nbsp;
+        ΔO₂: {result["deltas"]["o2_change"]:+.1f}%
+        </div>""", unsafe_allow_html=True)
+

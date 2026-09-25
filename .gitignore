@@ -1,22 +1,35 @@
-# Environments
+# Environment & secrets — NEVER commit these
 .env
-.venv/
-venv/
-env/
+*.env
 
-# Python
-__pycache__/
-*.pyc
-
-# Database
+# Database — contains live data, exclude from git
 lifeline.db
+*.db
 *.sqlite3
 
-# Build
-build/
-dsa_engine.exe
-*.o
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# IDE
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Editor
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

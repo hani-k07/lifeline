@@ -26,7 +26,7 @@ if role not in ["super_admin", "hospital_admin"]:
     }
     </style>
     <div class='glass-card' style='border-color:rgba(255,65,108,0.4);'>
-        <h2 style='color:white;'>🚫 Access Denied</h2>
+        <h2 style='color:white;'>Access Denied</h2>
         <p style='color:#95A5A6;'>You do not have permission to view this page. Hospital Admin only.</p>
     </div>
     """, unsafe_allow_html=True)
@@ -54,7 +54,7 @@ if not hosp_id:
 hospital = get_hospital_by_id(hosp_id)
 stats = get_hospital_stats(hosp_id)
 
-st.markdown(f"<h1 style='color:white;'>🏥 {hospital['name']} Management</h1>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='color:white;'>{hospital['name']} Management</h1>", unsafe_allow_html=True)
 
 # --- FEATURE A: MY HOSPITAL OVERVIEW ---
 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
@@ -71,14 +71,14 @@ with col4:
     st.markdown(f"<div class='metric-card'><div class='metric-label'>Status</div><div class='metric-value' style='background:none; -webkit-text-fill-color:{'#00D2AA' if hospital['status']=='active' else '#FFB347'};'>{hospital['status'].upper()}</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
-with st.expander("📝 Edit Hospital Details"):
+with st.expander("Edit Hospital Details"):
     with st.form("edit_hosp_form"):
         new_addr = st.text_input("Address", value=hospital['address'])
         new_phone = st.text_input("Contact Number", value=hospital['contact_number'])
         if st.form_submit_button("UPDATE FACILITY INFO"):
             if update_hospital(hosp_id, {'address': new_addr, 'contact_number': new_phone}):
                 add_audit_log("HOSPITAL_UPDATED", st.session_state["email"], hosp_id, "hospital", hosp_id, "Info updated")
-                st.success("✓ Facility information updated")
+                st.success("Facility information updated")
                 st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
@@ -109,7 +109,7 @@ with st.form("add_staff_form"):
                                  department=w_dept, shift=w_shift)
             if success:
                 add_audit_log("STAFF_ADDED", st.session_state["email"], hosp_id, "user", w_email, f"{w_name} added to {w_dept}")
-                st.success(f"✓ Staff member {w_name} added")
+                st.success(f"Staff member {w_name} added")
                 st.info(f"Temporary password: {w_pass} - Please share with staff member.")
                 st.rerun()
             else:

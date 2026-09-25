@@ -13,7 +13,7 @@ render_sidebar()
 from utils.styles import get_glass_css
 st.markdown(get_glass_css(), unsafe_allow_html=True)
 
-st.markdown("<h1 style='color:white;'>👤 My Profile</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='color:white;'>My Profile</h1>", unsafe_allow_html=True)
 
 # Fetch current user details from session and DB
 user_id = st.session_state.get("user_id")
@@ -77,7 +77,7 @@ with st.form("change_pass_form"):
         else:
             if change_password(user_id, curr_pass, new_pass):
                 add_audit_log("PASSWORD_CHANGED", email, hosp_id, "user", user_id, "User changed own password")
-                st.success("✓ Password changed successfully! Please login again.")
+                st.success("Password changed successfully! Please login again.")
                 st.session_state.clear()
                 st.rerun()
             else:
