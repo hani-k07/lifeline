@@ -31,10 +31,26 @@ def current_version(conn: sqlite3.Connection) -> int:
     return int(conn.execute("PRAGMA user_version").fetchone()[0])
 
 
+def _backup(conn: sqlite3.Connection, version: int) -> None:
+    """Copy the database next to itself before its first migration (once per starting version)."""
+    file = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not file:                                    # in-memory
+        return
+    target = Path(file + f".bak-v{version}")
+    if not target.exists():
+        dest = sqlite3.connect(target)
+        try:
+            conn.backup(dest)
+        finally:
+            dest.close()
+
+
 def apply_migrations(conn: sqlite3.Connection) -> list[int]:
     """Apply every migration newer than the DB's user_version. Returns the versions applied."""
     applied: list[int] = []
     start = current_version(conn)
+    if start < LATEST_VERSION:
+        _backup(conn, start)
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
         for version, path in _migrations():

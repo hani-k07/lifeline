@@ -13,7 +13,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table, metric_card, render_ai_response,
 )
-from lifeline.auth.roles import Role
+from lifeline.auth.rbac import require_page
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_blood_units, get_blood_requests,
@@ -25,9 +25,7 @@ from ai_engine import (
 )
 from dsa_engine import build_hospital_graph, forecast_demand, detect_shortage_risk, BLOOD_GROUPS
 
-if not st.session_state.get("logged_in"):
-    st.switch_page("app.py")
-    st.stop()
+require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
@@ -35,10 +33,6 @@ render_sidebar()
 _role = st.session_state.get("user_role", "")
 _hosp_id = st.session_state.get("user_hospital_id")
 _uid = int(st.session_state.get("user_id", 0))
-
-if _role == Role.STAFF:
-    alert_banner("Access denied. AI Center requires Hospital Admin or Super Admin role.", "danger")
-    st.stop()
 
 # ── Title Block ──
 st.markdown("""

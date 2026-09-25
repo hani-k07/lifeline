@@ -44,6 +44,17 @@ def test_legacy_roles_are_migrated_and_data_kept():
         )
 
 
+def test_first_migration_leaves_a_backup_of_the_original():
+    path = _legacy_db()
+    migrate.ensure_schema()
+    backup = path.with_name(path.name + ".bak-v0")
+    assert backup.exists()
+    roles = {r[0] for r in sqlite3.connect(backup).execute("SELECT role FROM users")}
+    assert roles == {"admin", "hospital", "staff"}            # untouched original
+    migrate.ensure_schema()                                    # no second backup / no overwrite
+    assert sorted(p.name for p in path.parent.glob("*.bak-*")) == [backup.name]
+
+
 def test_migration_is_idempotent():
     _legacy_db()
     assert migrate.ensure_schema() == [1]

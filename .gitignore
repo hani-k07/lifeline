@@ -43,3 +43,4 @@ _dev_*.py
 .coverage
 .mypy_cache/
 .ruff_cache/
+*.db.bak-*

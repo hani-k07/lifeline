@@ -12,6 +12,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table,
 )
+from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
@@ -20,9 +21,7 @@ from utils.database import (
 )
 from dsa_engine import build_hospital_graph, BLOOD_GROUPS
 
-if not st.session_state.get("logged_in"):
-    st.switch_page("app.py")
-    st.stop()
+require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()

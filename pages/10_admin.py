@@ -12,6 +12,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table, metric_card,
 )
+from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from lifeline.auth.service import create_user
 from utils.sidebar import render_sidebar
@@ -20,19 +21,13 @@ from utils.database import (
     get_ai_logs,
 )
 
-if not st.session_state.get("logged_in"):
-    st.switch_page("app.py")
-    st.stop()
+require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
 
 _role = st.session_state.get("user_role", "")
 _uid = int(st.session_state.get("user_id", 0))
-
-if _role != Role.SUPER_ADMIN:
-    alert_banner("Access denied. This page is restricted to Super Admins only.", "danger")
-    st.stop()
 
 # ── Title Block ──
 st.markdown("""
@@ -60,7 +55,7 @@ with tab1:
             user_rows.append({
                 "Name": u.get("name", "—"),
                 "Email": u.get("email", "—"),
-                "Role": status_pill(u.get("role", "staff")),
+                "Role": status_pill(Role(u["role"]).label if u.get("role") in [r.value for r in Role] else "unknown"),
                 "Hospital": u.get("hospital_name", "Global"),
                 "Created": u.get("created_at", "")[:16].replace("T", " ") if u.get("created_at") else "—"
             })
