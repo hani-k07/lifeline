@@ -18,7 +18,12 @@ from utils.sidebar import render_sidebar
 from lifeline.services.donors import record_screening, register_donor
 from utils.actions import attempt
 from utils.database import get_all_hospitals, get_donors, get_screening_tests
-from dsa_engine import BLOOD_GROUPS
+from datetime import date
+
+from lifeline import clock
+from lifeline.constants import BLOOD_GROUPS
+from lifeline.engine.base import EngineError
+from lifeline.engine.screening import risk_score, screen_donor
 
 user = require_page(__file__)
 
@@ -110,15 +115,14 @@ with tab2:
         alert_banner(error_msg, "danger")
 
 with tab3:
-    section_header("Blood Screening Test", "Forward-Chain Expert System & Hill-Climbing Risk Scorer")
+    section_header("Donor Screening Test", "Rule engine: every rule is evaluated and every reason is shown")
 
     donors = get_donors(sel_hosp_id)
     if not donors:
         alert_banner("No donors registered. Register a donor first.", "warning")
     else:
-        donor_map = {f"{d['name']} ({d['blood_group']})": d["id"] for d in donors}
-        sel_donor_label = st.selectbox("Select Donor", list(donor_map.keys()))
-        sel_donor_id = donor_map[sel_donor_label]
+        donor_map = {f"{d['name']} ({d['blood_group']})": d for d in donors}
+        donor = donor_map[st.selectbox("Select Donor", list(donor_map.keys()))]
 
         st.markdown("**Serology Panel:**")
         cols = st.columns(5)
@@ -128,48 +132,57 @@ with tab3:
         syphilis = cols[3].checkbox("Syphilis")
         malaria = cols[4].checkbox("Malaria")
 
-        st.markdown("**Donor Vitals:**")
-        vcol1, vcol2, vcol3, vcol4 = st.columns(4)
-        age = vcol1.number_input("Age", 18, 65, 30)
-        weight = vcol2.number_input("Weight (kg)", 40.0, 120.0, 65.0)
-        hemoglobin = vcol3.number_input("Hemoglobin (g/dL)", 8.0, 20.0, 14.0)
-        bp_sys = vcol4.number_input("BP Systolic", 80, 200, 120)
+        st.markdown("**Donor Vitals (all are required to clear a donor):**")
+        v1, v2, v3, v4 = st.columns(4)
+        age = v1.number_input("Age", 10, 100, int(donor.get("age") or 30))
+        weight = v2.number_input("Weight (kg)", 25.0, 200.0, 65.0)
+        hemoglobin = v3.number_input("Hemoglobin (g/dL)", 5.0, 20.0, 14.0)
+        temperature = v4.number_input("Temperature (°C)", 34.0, 42.0, 36.8)
+        v5, v6, v7, v8 = st.columns(4)
+        bp_sys = v5.number_input("BP Systolic (mmHg)", 60, 260, 120)
+        bp_dia = v6.number_input("BP Diastolic (mmHg)", 30, 160, 80)
+        pulse = v7.number_input("Pulse (bpm)", 30, 200, 72)
+        thinners = v8.checkbox("On blood thinners")
+
+        days_since = None
+        if donor.get("last_donated"):
+            days_since = max(0, (clock.today() - date.fromisoformat(str(donor["last_donated"])[:10])).days)
+        st.caption("Days since last donation: " + ("never donated" if days_since is None else f"{days_since} (from the donor record)"))
 
         if st.button("Run Screening", use_container_width=True):
-            # Expert system via dsa_engine
-            from dsa_engine import screen_donor, risk_score
             donor_data = {
-                "age": age, "weight": weight, "hemoglobin": hemoglobin,
-                "bp_systolic": bp_sys, "hiv": hiv, "hepb": hep_b,
-                "hepc": hep_c, "syphilis": syphilis, "malaria": malaria,
-                "diseases": [],
+                "age": age, "weight": weight, "hemoglobin": hemoglobin, "bp_systolic": bp_sys, "bp_diastolic": bp_dia,
+                "pulse": pulse, "temperature": temperature, "last_donation_days": days_since, "on_blood_thinners": thinners,
+                "hiv": hiv, "hepb": hep_b, "hepc": hep_c, "syphilis": syphilis, "malaria": malaria,
             }
-            screen_result = screen_donor({"donor": donor_data})
-            risk_result = risk_score({"donor": {**donor_data, "last_donation_days": 365}})
+            try:
+                screen_result = screen_donor(donor_data)
+                risk_result = risk_score(donor_data)
+            except EngineError as exc:
+                alert_banner(f"Check the entries: {exc}", "danger")
+            else:
+                ok, save_error, _ = attempt(record_screening, user, donor["id"], sel_hosp_id, hiv=hiv, hepatitis_b=hep_b,
+                                            hepatitis_c=hep_c, syphilis=syphilis, malaria=malaria,
+                                            decision=screen_result["decision"], risk_score=int(risk_result["score"]))
+                if not ok:
+                    alert_banner(save_error or "Could not save the screening.", "danger")
 
-            ok, save_error, _ = attempt(record_screening, user, sel_donor_id, sel_hosp_id, hiv=hiv, hepatitis_b=hep_b,
-                                        hepatitis_c=hep_c, syphilis=syphilis, malaria=malaria,
-                                        decision=screen_result["decision"], risk_score=int(risk_result["score"]))
-            if not ok:
-                alert_banner(save_error or "Could not save the screening.", "danger")
+                decision = screen_result["decision"]
+                level = {"SAFE": "success", "DEFER": "warning", "BLOCK": "danger"}[decision]
+                st.markdown(f"""
+                <div class='glass-hero' style='margin-top:16px;'>
+                    <h3 style='margin:0 0 10px;font-family:"Syne",sans-serif;'>Screening Outcome</h3>
+                    <div style='display:flex;align-items:center;gap:12px;margin-bottom:12px;'>
+                        {status_pill(decision)}
+                        <span style='font-size:0.9rem;color:var(--text-secondary);'>Risk Score: <strong>{risk_result['score']}/100</strong></span>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+                alert_banner(risk_result["recommendation"], level)
 
-            decision = screen_result["decision"]
-            dec_level = {"SAFE": "success", "DEFER": "warning", "BLOCK": "danger"}.get(decision, "info")
-
-            st.markdown(f"""
-            <div class='glass-hero' style='margin-top:16px;'>
-                <h3 style='margin:0 0 10px;font-family:"Syne",sans-serif;'>Screening Outcome</h3>
-                <div style='display:flex;align-items:center;gap:12px;margin-bottom:12px;'>
-                    {status_pill(decision)}
-                    <span style='font-size:0.9rem;color:var(--text-secondary);'>Risk Score: <strong>{risk_result['score']}/100</strong></span>
-                </div>
-            </div>""", unsafe_allow_html=True)
-            
-            # Recommendation Banner
-            alert_banner(risk_result['recommendation'], dec_level)
-
-            if screen_result["fired_rules"]:
-                with st.expander("Expert System Inference Chain"):
-                    for rule in screen_result["fired_rules"]:
-                        st.markdown(f"• **{rule['rule_name']}** (priority {rule['priority']}): {rule['reason']}")
-
+                if screen_result["fired_rules"]:
+                    section_header("Why", "Every rule that fired")
+                    styled_table(pd.DataFrame([{"Rule": r["rule_name"].replace("_", " "), "Outcome": status_pill(r["decision"]),
+                                                "Reason": r["reason"]} for r in screen_result["fired_rules"]]))
+                with st.expander("Full inference trace"):
+                    for line in screen_result["inference_chain"]:
+                        st.markdown(f"• {line}")

@@ -16,6 +16,8 @@ from utils.styles import (
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
+from lifeline import clock
+from lifeline.engine.sorting import fefo_sort
 from lifeline.services.inventory import issue_units, receive_units
 from utils.actions import attempt
 from utils.database import get_all_hospitals, get_blood_units
@@ -74,44 +76,25 @@ with tab1:
                           height=300, coloraxis_showscale=False, margin=dict(l=0, r=0, t=40, b=0))
         st.plotly_chart(fig, use_container_width=True, theme=None)
 
-        # Expiry warning
-        today = datetime.today().date()
-        expiring_soon = []
-        for u in units:
-            if u.get("expiry_date"):
-                try:
-                    exp = datetime.strptime(u["expiry_date"][:10], "%Y-%m-%d").date()
-                    days_left = (exp - today).days
-                    if 0 <= days_left <= 7:
-                        expiring_soon.append({
-                            "Blood Group": blood_badge(u["blood_group"]),
-                            "Units": u["units"],
-                            "Expiry Date": u["expiry_date"][:10],
-                            "Days Left": days_left
-                        })
-                except Exception:
-                    pass
-
-        if expiring_soon:
-            alert_banner(f"{len(expiring_soon)} units expiring within 7 days!", "danger")
-            df_exp = pd.DataFrame(expiring_soon)
-            styled_table(df_exp)
+        # First-Expired-First-Out order from the engine (units are already unexpired: expired ones are not stock)
+        fefo = fefo_sort(units, clock.today(), soon_days=7)
+        if fefo.expiring_soon:
+            alert_banner(f"{sum(u['units'] for u in fefo.expiring_soon)} unit(s) expire within 7 days - use these first.", "danger")
+            styled_table(pd.DataFrame([{
+                "Blood Group": blood_badge(u["blood_group"]), "Units": u["units"], "Expiry Date": u["expiry_date"][:10],
+                "Days Left": (datetime.strptime(u["expiry_date"][:10], "%Y-%m-%d").date() - clock.today()).days,
+            } for u in fefo.expiring_soon]))
 
         st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
         # Full inventory table
-        section_header("Full Inventory")
-        inv_rows = []
-        for u in units:
-            inv_rows.append({
-                "Blood Group": blood_badge(u["blood_group"]),
-                "Units": u["units"],
-                "Expiry Date": u["expiry_date"][:10] if u.get("expiry_date") else "—",
-                "Last Updated": u["updated_at"][:16].replace("T", " ") if u.get("updated_at") else "—"
-            })
-        if inv_rows:
-            df_inv = pd.DataFrame(inv_rows)
-            styled_table(df_inv)
+        section_header("Dispatch order (FEFO)", "Earliest expiry leaves first; stock is issued in this order")
+        styled_table(pd.DataFrame([{
+            "Blood Group": blood_badge(u["blood_group"]),
+            "Units": u["units"],
+            "Expiry Date": u["expiry_date"][:10],
+            "Last Updated": u["updated_at"][:16].replace("T", " ") if u.get("updated_at") else "—",
+        } for u in fefo.dispatch_order]))
 
 # ── Tab 2: Add Stock ──
 with tab2:

@@ -2,9 +2,11 @@
 """Blood Exchange Network — LIFELINE v6.0"""
 from __future__ import annotations
 
-import streamlit as st
+import dataclasses
+import html
+
 import pandas as pd
-from datetime import datetime
+import streamlit as st
 
 st.set_page_config(page_title="Exchange — LIFELINE", layout="wide")
 
@@ -17,8 +19,11 @@ from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from lifeline.services.exchanges import cancel_exchange, complete_exchange, request_exchange, respond_exchange
 from utils.actions import attempt
-from utils.database import get_all_hospitals, get_blood_units, get_exchanges
-from dsa_engine import build_hospital_graph, BLOOD_GROUPS
+from utils.database import get_all_hospitals, get_exchanges, get_stock_by_hospital
+from utils.network import get_road_graph
+from lifeline.constants import BLOOD_GROUPS, LOW_UNITS
+from lifeline.engine.matching import exchange_match
+from lifeline.engine.routing import find_sources
 
 user = require_page(__file__)
 
@@ -39,7 +44,7 @@ st.markdown("""
     </p>
 </div>""", unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["Find & Request Exchange", "Exchange History"])
+tab1, tab2, tab_suggest = st.tabs(["Find & Request Exchange", "Exchange History", "Network Suggestions"])
 
 with tab1:
     hospitals = get_all_hospitals()
@@ -60,9 +65,9 @@ with tab1:
     if find_clicked:
         src_hosp = next((h for h in hospitals if h["name"] == src_name), None)
         if src_hosp:
-            graph = build_hospital_graph(hospitals)
-            all_inv = get_blood_units()
-            nearest = graph.nearest_hospitals_with_blood(src_hosp["id"], blood_grp, all_inv)
+            graph = get_road_graph(hospitals)
+            nearest = [{**dataclasses.asdict(o), "route": " → ".join(graph.nodes[n].name for n in o.path)}
+                       for o in find_sources(graph, src_hosp["id"], blood_grp, get_stock_by_hospital(), include_source=False)]
 
             if nearest:
                 st.session_state["exchange_results"] = nearest
@@ -81,26 +86,19 @@ with tab1:
 
         section_header(f"Results", f"{len(results)} hospitals with {bg}")
 
-        for r in results[:5]:
+        for r in results[:6]:
             with st.container():
                 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-                eta = round(r["distance_km"] / 5 * 15, 0)
-                
-                c1.markdown(f"<div style='font-size:0.95rem;font-weight:600;'>{r['hospital_name']}</div>", unsafe_allow_html=True)
-                c2.markdown(f"<span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem;'>{r['distance_km']} km</span>", unsafe_allow_html=True)
-                c3.markdown(f"<span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem;'>{r['units_available']} units</span>", unsafe_allow_html=True)
-                c4.markdown(f"<span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem;'>~{int(eta)} min ETA</span>", unsafe_allow_html=True)
+                c1.markdown(f"<div style='font-size:0.95rem;font-weight:600;'>{html.escape(r['hospital_name'])}</div>"
+                            f"{blood_badge(r['unit_group'])} <span style='font-size:0.72rem'>{'exact' if r['exact'] else 'compatible'}</span>",
+                            unsafe_allow_html=True)
+                c2.markdown(f"<span style='font-family:monospace;font-size:0.85rem;'>{r['distance_km']} km</span>", unsafe_allow_html=True)
+                c3.markdown(f"<span style='font-family:monospace;font-size:0.85rem;'>{r['units_available']} units</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span style='font-family:monospace;font-size:0.85rem;'>~{int(round(r['eta_min']))} min ETA</span>", unsafe_allow_html=True)
+                st.caption(f"Route: {r['route']}")
 
-                # Path display
-                if r.get("path"):
-                    path_names = []
-                    hosp_id_to_name = {h["id"]: h["name"] for h in hospitals}
-                    for pid in r["path"]:
-                        path_names.append(hosp_id_to_name.get(pid, str(pid)))
-                    st.caption(f"Route: {' -> '.join(path_names)}")
-
-                if st.button(f"Request Exchange from {r['hospital_name']}", key=f"req_{r['hospital_id']}"):
-                    ok, ex_error, _ = attempt(request_exchange, user, r["hospital_id"], src["id"], bg,
+                if st.button(f"Request {r['unit_group']} from {r['hospital_name']}", key=f"req_{r['hospital_id']}_{r['unit_group']}"):
+                    ok, ex_error, _ = attempt(request_exchange, user, r["hospital_id"], src["id"], r["unit_group"],
                                               min(int(needed), r["units_available"]))
                     if ok:
                         st.toast(f"Exchange request sent to {r['hospital_name']}")
@@ -155,3 +153,42 @@ with tab2:
                             st.rerun()
             if action_error:
                 alert_banner(action_error, "danger")
+
+with tab_suggest:
+    section_header("Suggested transfers", "Hospitals below the low-stock level are matched with hospitals holding more than twice that level")
+    stock = get_stock_by_hospital()
+    names_by_id = {h["id"]: h["name"] for h in hospitals}
+    key_groups = ("A+", "B+", "O+", "O-")
+    shortages = [{"hospital_id": h, "blood_group": g, "units": LOW_UNITS - stock.get(h, {}).get(g, 0)}
+                 for h in names_by_id for g in key_groups if stock.get(h, {}).get(g, 0) < LOW_UNITS]
+    surpluses = [{"hospital_id": h, "blood_group": g, "units": n - 2 * LOW_UNITS}
+                 for h, groups in stock.items() for g, n in groups.items() if n > 2 * LOW_UNITS]
+    graph = get_road_graph(hospitals)
+    dist_cache: dict[int, dict[int, float]] = {}
+
+    def road_km(a: int, b: int) -> float:
+        if a not in dist_cache:
+            dist_cache[a] = graph.dijkstra(a)[0]
+        return dist_cache[a].get(b, float("inf"))
+
+    plan = exchange_match(shortages, surpluses, road_km)
+    if not plan["matches"]:
+        alert_banner("No transfers to suggest: no shortage can be covered from a surplus right now.", "info")
+    else:
+        suggest_error = None
+        for i, m in enumerate(plan["matches"][:12]):
+            c1, c2 = st.columns([5, 1])
+            c1.markdown(f"{blood_badge(m['unit_group'])} {m['units']}u · {html.escape(names_by_id[m['from_hospital_id']])} → "
+                        f"{html.escape(names_by_id[m['to_hospital_id']])} · {m['distance_km']} km"
+                        f"{'' if m['exact'] else ' · compatible substitute for ' + m['needed_group']}", unsafe_allow_html=True)
+            if _role == Role.SUPER_ADMIN or m["to_hospital_id"] == _hosp_id:
+                if c2.button("Request", key=f"sug_{i}"):
+                    ok, suggest_error, _ = attempt(request_exchange, user, m["from_hospital_id"], m["to_hospital_id"],
+                                                   m["unit_group"], m["units"])
+                    if ok:
+                        st.toast("Exchange request sent")
+                        st.rerun()
+        if suggest_error:
+            alert_banner(suggest_error, "danger")
+    if plan["unmet"]:
+        st.caption(f"{len(plan['unmet'])} shortage(s) cannot be covered from the network's surplus: consider a supplier order.")

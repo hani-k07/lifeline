@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from dsa_engine import BLOOD_GROUPS
+from lifeline.constants import BLOOD_GROUPS
 
 st.set_page_config(page_title="Dashboard — LIFELINE", layout="wide")
 

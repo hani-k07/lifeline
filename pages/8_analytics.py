@@ -21,7 +21,11 @@ from utils.database import (
     get_all_hospitals, get_blood_units, get_donors,
     get_transfusions, get_blood_requests, get_blood_summary, get_daily_usage,
 )
-from dsa_engine import BLOOD_GROUPS, forecast_demand, detect_shortage_risk, build_hospital_graph
+from lifeline import clock
+from lifeline.constants import BLOOD_GROUPS
+from lifeline.engine.clustering import segment_donors
+from lifeline.engine.forecasting import predict_shortage, shortage_risk, wma_forecast
+from utils.network import get_road_graph
 
 require_page(__file__)
 
@@ -53,7 +57,7 @@ else:
     sel_hosp_id = _hosp_id
     sel_name = _hosp_name
 
-tab1, tab2, tab3 = st.tabs(["Inventory Overview", "Demand Forecast", "Network Map"])
+tab1, tab2, tab_donors, tab3 = st.tabs(["Inventory Overview", "Demand Forecast", "Donors", "Network Map"])
 
 with tab1:
     units = get_blood_units(sel_hosp_id)
@@ -99,91 +103,104 @@ with tab1:
         alert_banner("No inventory data to display.", "info")
 
 with tab2:
-    section_header("7-Day Demand Forecast", "Weighted Moving Average")
+    section_header("7-Day Demand Forecast", "Weighted moving average of real usage (units issued or transfused per day)")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fg_bg = st.selectbox("Blood Group", BLOOD_GROUPS, key="fg_bg")
-    with col2:
-        fg_hosp = sel_hosp_id if sel_hosp_id else (get_all_hospitals()[0]["id"] if get_all_hospitals() else None)
+    fg_bg = st.selectbox("Blood Group", BLOOD_GROUPS, key="fg_bg")
+    historical = get_daily_usage(sel_hosp_id, fg_bg, 14)
+    if not any(historical):
+        alert_banner("No usage recorded for this group in the last 14 days; the forecast below is flat.", "info")
+    current_stock = get_blood_summary(sel_hosp_id).get(fg_bg, 0)
 
-    if fg_hosp:
-        # Real usage: units issued or transfused per day, from the inventory event ledger.
-        historical = get_daily_usage(fg_hosp, fg_bg, 14)
-        if not any(historical):
-            alert_banner("No usage recorded for this group in the last 14 days; the forecast below is flat.", "info")
-        current_stock_list = get_blood_units(fg_hosp)
-        current_stock = sum(u["units"] for u in current_stock_list if u["blood_group"] == fg_bg)
+    forecast = wma_forecast(historical, horizon=7, window=7)
+    risk = shortage_risk(current_stock, forecast)
 
-        forecast = forecast_demand(historical, window=7, forecast_days=7)
-        risk = detect_shortage_risk(current_stock, forecast)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(metric_card("Current Stock", f"{current_stock} u", icon="Stock", variant="default"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(metric_card("7-Day Avg Forecast", f"{sum(forecast) / 7:.1f} u/day", icon="Forecast", variant="default"), unsafe_allow_html=True)
+    with c3:
+        st.markdown(metric_card("Risk Level", risk.risk_level, icon="Risk",
+                                variant="critical" if risk.risk_level in ("CRITICAL", "HIGH") else "success"), unsafe_allow_html=True)
 
-        # Metrics
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(metric_card("Current Stock", f"{current_stock} u", icon="Stock", variant="default"), unsafe_allow_html=True)
-        with c2:
-            st.markdown(metric_card("7-Day Avg Forecast", f"{sum(forecast)/7:.1f} u/day", icon="Forecast", variant="default"), unsafe_allow_html=True)
-        with c3:
-            st.markdown(metric_card("Risk Level", risk["risk_level"], icon="Risk", variant="critical" if risk["risk_level"] in ("CRITICAL", "HIGH") else "success"), unsafe_allow_html=True)
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    days_hist = [f"Day -{14 - i}" for i in range(14)]
+    days_fore = [f"Day +{i + 1}" for i in range(7)]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=days_hist, y=historical, name="Historical", line=dict(color="#64b5f6", width=2)))
+    fig.add_trace(go.Scatter(x=days_fore, y=forecast, name="Forecast (WMA)", line=dict(color="#ff416c", width=2, dash="dash")))
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), plot_bgcolor="rgba(0,0,0,0)",
+                      template=chart_template(), height=350, title=f"Usage Forecast — {fg_bg} at {sel_name}",
+                      xaxis=dict(showgrid=False, title="Day"),
+                      yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)", title="Units per day"))
+    st.plotly_chart(fig, use_container_width=True, theme=None)
 
-        # Chart
-        days_hist = [f"Day -{14-i}" for i in range(14)]
-        days_fore = [f"Day +{i+1}" for i in range(7)]
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=days_hist, y=historical, name="Historical", line=dict(color="#64b5f6", width=2)))
-        fig.add_trace(go.Scatter(x=days_fore, y=forecast, name="Forecast (WMA)", line=dict(color="#ff416c", width=2, dash="dash")))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), plot_bgcolor="rgba(0,0,0,0)",
-                          template=chart_template(), height=350,
-                          title=f"Usage Forecast — {fg_bg} at {sel_name}",
-                          xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)"))
-        st.plotly_chart(fig, use_container_width=True, theme=None)
+    if risk.risk_level in ("CRITICAL", "HIGH"):
+        alert_banner(f"Reorder {risk.recommended_reorder} units of {fg_bg} — stock-out expected in {risk.days_until_stockout} day(s).", "danger")
+    elif risk.risk_level == "MEDIUM":
+        alert_banner(f"Monitor stock — consider ordering {risk.recommended_reorder} additional units.", "warning")
+    else:
+        alert_banner("Stock covers the forecast horizon." if risk.days_until_stockout is None else "Stock level is adequate.", "success")
 
-        if risk["risk_level"] in ("CRITICAL", "HIGH"):
-            alert_banner(f"Reorder {risk['recommended_reorder']} units of {fg_bg} — stockout in {risk['days_until_stockout']} days!", "danger")
-        elif risk["risk_level"] == "MEDIUM":
-            alert_banner(f"Monitor stock — consider ordering {risk['recommended_reorder']} additional units.", "warning")
-        else:
-            alert_banner(f"Stock levels are adequate. Estimated {risk['days_until_stockout']}+ days of supply.", "success")
+    section_header("All blood groups", "Shortage outlook for the next 7 days")
+    summary = get_blood_summary(sel_hosp_id)
+    rows = predict_shortage([{"blood_group": g, "stock": summary.get(g, 0), "history": get_daily_usage(sel_hosp_id, g, 14)}
+                             for g in BLOOD_GROUPS])
+    styled_table(pd.DataFrame([{
+        "Blood Group": blood_badge(r["blood_group"]), "Stock": r["stock"], "Avg use / day": r["avg_daily_demand"],
+        "Trend": r["trend"], "Days to stock-out": "beyond 7" if r["days_until_stockout"] is None else r["days_until_stockout"],
+        "Risk": status_pill(r["risk_level"]), "Suggested reorder": r["recommended_reorder"],
+    } for r in rows]))
+
+with tab_donors:
+    section_header("Donor segments", "K-Means on age, number of donations and time since last donation")
+    donor_rows = get_donors(sel_hosp_id)
+    if len(donor_rows) < 3:
+        alert_banner("At least 3 registered donors are needed to segment them.", "info")
+    else:
+        seg = segment_donors(donor_rows, clock.today())
+        cols = st.columns(len(seg["summary"]))
+        for col, item in zip(cols, seg["summary"], strict=True):
+            with col:
+                st.markdown(metric_card(item["segment"].title(), f"{item['count']}", icon="Donors",
+                                        delta=f"avg {item['avg_donations']} donations, last {item['avg_days_since_last']} d ago",
+                                        variant="critical" if item["segment"] == "LAPSED" else "default"), unsafe_allow_html=True)
+        st.caption("LAPSED donors have gone longest without donating: contact them first.")
+        lapsed = [x for x in seg["segments"] if x["segment"] == "LAPSED"]
+        if lapsed:
+            styled_table(pd.DataFrame([{"Donor": x["donor_name"], "Segment": status_pill(x["segment"])} for x in lapsed]))
 
 with tab3:
-    section_header("Hospital Network Map", "Dijkstra Graph")
+    section_header("Hospital Network Map", "Sparse road network: each hospital linked to its 3 nearest, distances x 1.3 for roads")
     hospitals = get_all_hospitals()
 
     if hospitals:
-        # Scatter map
+        graph = get_road_graph(hospitals)
         df_h = pd.DataFrame(hospitals)
-        df_h["stock"] = df_h["id"].apply(lambda hid: sum(u["units"] for u in get_blood_units(hid)))
-        df_h["size"] = df_h["stock"].apply(lambda s: max(10, min(40, s / 10)))
+        df_h["stock"] = df_h["id"].map({h["id"]: sum(get_blood_summary(h["id"]).values()) for h in hospitals})
+        df_h["size"] = df_h["stock"].apply(lambda n: max(10, min(40, n / 10)))
 
-        fig_map = px.scatter_mapbox(
-            df_h, lat="latitude", lon="longitude",
-            hover_name="name", hover_data={"stock": True, "phone": True},
-            size="size", color="stock",
-            color_continuous_scale=["#ff4444", "#ffaa00", "#00c853"],
-            mapbox_style="carto-darkmatter",
-            zoom=11, center={"lat": 31.52, "lon": 74.34},
-            title="Lahore Hospital Blood Network",
-            template=chart_template(),
+        fig_map = px.scatter_map(
+            df_h, lat="latitude", lon="longitude", hover_name="name", hover_data={"stock": True, "phone": True},
+            size="size", color="stock", color_continuous_scale=["#ff4444", "#ffaa00", "#00c853"],
+            map_style="carto-darkmatter" if get_theme() == "dark" else "carto-positron",
+            zoom=11, center={"lat": 31.52, "lon": 74.34}, title="Lahore Hospital Blood Network", template=chart_template(),
         )
-        fig_map.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), height=500,
-                              margin=dict(l=0, r=0, t=40, b=0))
+        for a_id, b_id, km in graph.edges():
+            na, nb = graph.nodes[a_id], graph.nodes[b_id]
+            fig_map.add_trace(go.Scattermap(lat=[na.lat, nb.lat], lon=[na.lon, nb.lon], mode="lines",
+                                            line=dict(width=1.5, color="#8892AA"), hoverinfo="text",
+                                            text=f"{na.name} - {nb.name}: {km:.1f} km", showlegend=False))
+        fig_map.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), height=500, margin=dict(l=0, r=0, t=40, b=0))
         st.plotly_chart(fig_map, use_container_width=True, theme=None)
 
-        # Distance matrix
-        with st.expander("Haversine Distance Matrix (km)"):
-            graph = build_hospital_graph(hospitals)
-            hosp_names = [h["name"] for h in hospitals]
-            hosp_ids = [h["id"] for h in hospitals]
-            dist_data = []
-            for hid in hosp_ids:
+        with st.expander("Road distance matrix (km, shortest route through the network)"):
+            ids = [h["id"] for h in hospitals]
+            matrix = []
+            for hid in ids:
                 dists, _ = graph.dijkstra(hid)
-                row = {graph.nodes[t]["name"]: round(dists.get(t, 0), 1) for t in hosp_ids}
-                dist_data.append(row)
-            df_dist = pd.DataFrame(dist_data, index=hosp_names)
-            styled_table(df_dist)
+                matrix.append({graph.nodes[t].name: round(dists.get(t, 0), 1) for t in ids})
+            styled_table(pd.DataFrame(matrix, index=[h["name"] for h in hospitals]))
     else:
         alert_banner("No hospitals in the network.", "info")
-

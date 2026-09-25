@@ -279,3 +279,23 @@ Items 1–4 and 8 of §3, P0-1, and the UI issues you reported are fixed on `mai
 **Still open:** caching (`st.cache_data`) and structured logging (Phase 6); `utils/database.py` is a read-only transitional shim until the pages are rebuilt (Phase 5); routing still matches exact groups only and the graph is still a full mesh (Phase 3); screening/reaction rules unchanged (Phase 3).
 
 **Quality gates:** `pytest` 313 passed; `ruff` + `mypy` clean on `lifeline/`, `tests/`, `scripts/`; coverage of `lifeline/` 96 %.
+
+---
+
+## 12. Status after Phase 3 (engine)
+
+| Finding | Status | Where |
+|---|---|---|
+| P0-2 screening never DEFERs on vitals | **Fixed.** Every rule is evaluated and every fired rule is reported; no overwrite. Age, pulse, temperature, donation-gap and blood-thinner rules added. A missing measurement is DEFER, never assumed normal. `risk_score` is built from the same rules (cannot disagree; HIV in flag + disease list counts once) | `lifeline/engine/screening.py` |
+| P0-3 reaction monitor false negatives | **Fixed** against a written table: SpO2 84 -> CRITICAL, BP drop 35 -> SEVERE, pulse read, absolute temperature used, missing vitals -> UNKNOWN, impossible readings rejected. Fuzzy score no longer collapses past its peak | `lifeline/engine/transfusion.py` |
+| #11 full-mesh graph | **Fixed.** k=3 nearest neighbours x 1.3 road factor, bridged to stay connected; multi-hop routes exist; Dijkstra verified against Floyd-Warshall | `engine/graph.py` |
+| #12 exact-group-only routing, Dijkstra per hospital | **Fixed.** One Dijkstra run; exact group first, then compatible groups (O- last), nearest first; BFS backups | `engine/routing.py` |
+| #10 missing operations / no dispatcher | **Done.** `run_engine(op, payload)` with registry, validation, complexity + PEAS metadata for 13 operations, all used by a page. `naive_bayes_classify` (invented training data) and `waste_minimize` (random) removed deliberately | `engine/dispatcher.py` |
+| #17 tests against a written reference | **Done.** `docs/CLINICAL_REFERENCE.md` lists every cut-off; a test fails if it disagrees with `thresholds.py`; every threshold is tested at its boundary | `tests/engine/` |
+| Duplicate engines | **Removed**: root `dsa_engine.py`, `utils/dsa_engine.py`, `utils/ai_engine.py`, `antigravity.py`, `test_connection.py`. numpy/scikit-learn/pytz dropped from requirements | |
+
+**Needs a person:** the clinical thresholds are proposals. Nothing in this repository has been approved by a clinician; see the banner in `docs/CLINICAL_REFERENCE.md`. Two deliberate behaviour changes need explicit sign-off: syphilis is now DEFER (the old code said BLOCK while its message said "defer until treated"), and blood thinners now defer a donor.
+
+**Still open:** AI client rewrite and advisory labelling (Phase 4); UI rebuild, 8-slice pie, WCAG contrast (Phase 5); caching, logging, self-test page, CI, Docker (Phase 6); docs rewrite (Phase 7).
+
+**Quality gates:** `pytest` 434 passed; `ruff` + `mypy` clean; coverage of `lifeline/` 98 % (`lifeline/engine` 98 %).

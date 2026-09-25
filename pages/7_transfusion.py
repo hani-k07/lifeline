@@ -18,7 +18,10 @@ from utils.sidebar import render_sidebar
 from lifeline.services.transfusion import record_transfusion
 from utils.actions import attempt
 from utils.database import get_all_hospitals, get_transfusions
-from dsa_engine import BLOOD_GROUPS, get_compatible_donors
+from lifeline.constants import BLOOD_GROUPS
+from lifeline.engine.base import EngineError
+from lifeline.engine.compatibility import compatible_donor_groups
+from lifeline.engine.transfusion import fuzzy_severity, monitor_reaction
 
 user = require_page(__file__)
 
@@ -82,7 +85,7 @@ with tab2:
 
     # Compatibility check helper
     check_bg = st.selectbox("Patient Blood Group (for compatibility check)", BLOOD_GROUPS, key="compat_bg")
-    compatible = get_compatible_donors(check_bg)
+    compatible = compatible_donor_groups(check_bg)
     
     # We construct a compatibility description using blood_badge for styling
     compat_badges_html = " ".join([blood_badge(c) for c in compatible])
@@ -139,34 +142,36 @@ with tab3:
         post_o2 = st.number_input("O₂ Saturation (%)", 70.0, 100.0, 98.0, key="post_o2")
 
     if st.button("Analyse Reaction", use_container_width=True):
-        from utils.dsa_engine import transfusion_monitor
         pre = {"temp": pre_temp, "bp_systolic": pre_bp, "pulse": pre_pulse, "o2_sat": pre_o2}
         post = {"temp": post_temp, "bp_systolic": post_bp, "pulse": post_pulse, "o2_sat": post_o2}
-        result = transfusion_monitor({"pre": pre, "post": post})
+        try:
+            result = monitor_reaction(pre, post)
+        except EngineError as exc:
+            alert_banner(f"Check the entries: {exc}", "danger")
+        else:
+            severity = result["severity"]
+            dec_level = {"red": "danger", "amber": "warning", "green": "success"}.get(result["alert_color"], "info")
+            st.markdown(f"""
+            <div class='glass-hero' style='margin-top:16px;'>
+                <h3 style='margin:0 0 10px;font-family:"Syne",sans-serif;'>Reaction Check</h3>
+                <div style='display:flex;align-items:center;gap:12px;margin-bottom:12px;'>
+                    {status_pill(severity)}
+                    <span style='font-size:0.9rem;color:var(--text-secondary);'>Pattern: <strong>{result["reaction_type"].replace("_", " ")}</strong></span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+            alert_banner(result["action"], dec_level)
 
-        reaction = result["reaction_type"]
-        severity = result["severity"]
-        action = result["action"]
-        alert_color = result.get("alert_color", "green")
-
-        dec_level = {"red": "danger", "amber": "warning", "green": "success"}.get(alert_color, "info")
-
-        st.markdown(f"""
-        <div class='glass-hero' style='margin-top:16px;'>
-            <h3 style='margin:0 0 10px;font-family:"Syne",sans-serif;'>Reflex Agent Analysis</h3>
-            <div style='display:flex;align-items:center;gap:12px;margin-bottom:12px;'>
-                {status_pill(reaction)}
-                <span style='font-size:0.9rem;color:var(--text-secondary);'>Severity: <strong>{severity}</strong></span>
-            </div>
-        </div>""", unsafe_allow_html=True)
-        
-        # Action Banner
-        alert_banner(action, dec_level)
-        
-        st.markdown(f"""
-        <div style='margin-top:12px;font-size:0.82rem;color:var(--text-secondary);font-family:"JetBrains Mono",monospace;'>
-        ΔTemp: {result["deltas"]["temp_rise"]:+.1f}°C &nbsp;|&nbsp;
-        ΔBP: {result["deltas"]["bp_drop"]:+.0f} mmHg &nbsp;|&nbsp;
-        ΔO₂: {result["deltas"]["o2_change"]:+.1f}%
-        </div>""", unsafe_allow_html=True)
-
+            d = result["deltas"]
+            if d:
+                st.markdown(f"""
+                <div style='margin-top:12px;font-size:0.82rem;color:var(--text-secondary);font-family:monospace;'>
+                ΔTemp: {d["temp_rise"]:+.1f}°C &nbsp;|&nbsp; ΔBP: {-d["bp_drop"]:+.0f} mmHg &nbsp;|&nbsp;
+                ΔPulse: {d["pulse_rise"]:+.0f} bpm &nbsp;|&nbsp; ΔO₂: {d["o2_change"]:+.1f}%
+                </div>""", unsafe_allow_html=True)
+                fuzzy = fuzzy_severity(d["temp_rise"], d["bp_drop"], d["o2_drop"], d["pulse_rise"])
+                st.caption(f"Graded severity score (supplementary): {fuzzy['severity_score']}/100 - {fuzzy['severity_label']}")
+            if result["fired_rules"]:
+                section_header("Findings", "Every rule that fired")
+                styled_table(pd.DataFrame([{"Rule": r["rule_name"].replace("_", " "), "Severity": status_pill(r["severity"]),
+                                            "Reason": r["reason"]} for r in result["fired_rules"]]))
+            st.caption("Decision support only: the clinician makes every treatment decision. Thresholds are proposals awaiting clinical sign-off.")

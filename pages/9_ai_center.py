@@ -25,7 +25,13 @@ from ai_engine import (
     ai_demand_forecast, ai_emergency_triage,
     ai_chatbot, ai_anomaly_detection, ai_exchange_advisor,
 )
-from dsa_engine import build_hospital_graph, forecast_demand, detect_shortage_risk, BLOOD_GROUPS
+import dataclasses
+
+from lifeline.constants import BLOOD_GROUPS
+from lifeline.engine.forecasting import shortage_risk, wma_forecast
+from lifeline.engine.routing import find_sources
+from utils.database import get_stock_by_hospital
+from utils.network import get_road_graph
 
 require_page(__file__)
 
@@ -76,14 +82,17 @@ with tab1:
     alert_banner(f"Current Stock: {current_stock} units of {blood_group} at {selected_hosp_name}", "info")
 
     historical = get_daily_usage(selected_hosp_id, blood_group, 14)      # real usage from the event ledger
-    forecast = forecast_demand(historical, window=7, forecast_days=7)
-    risk = detect_shortage_risk(current_stock, forecast)
+    forecast = wma_forecast(historical, horizon=7, window=7)
+    risk_result = shortage_risk(current_stock, forecast)
+    # For the prompt: "None" means the stock outlasts the 7-day forecast.
+    risk = {"risk_level": risk_result.risk_level, "recommended_reorder": risk_result.recommended_reorder,
+            "days_until_stockout": risk_result.days_until_stockout if risk_result.days_until_stockout is not None else "more than 7"}
 
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(metric_card("7-Day Avg Forecast", f"{sum(forecast)/7:.1f} u/day", icon="Forecast", variant="default"), unsafe_allow_html=True)
     with c2:
-        st.markdown(metric_card("Days Until Stockout", f"{risk['days_until_stockout']}", icon="Stockout", variant="critical" if risk["days_until_stockout"] <= 3 else "default"), unsafe_allow_html=True)
+        st.markdown(metric_card("Days Until Stockout", f"{risk['days_until_stockout']}", icon="Stockout", variant="critical" if risk_result.risk_level == "CRITICAL" else "default"), unsafe_allow_html=True)
     with c3:
         st.markdown(metric_card("Risk Level", risk["risk_level"], icon="Risk", variant="critical" if risk["risk_level"] in ("CRITICAL", "HIGH") else "default"), unsafe_allow_html=True)
 
@@ -263,16 +272,17 @@ with tab5:
     if st.button("Find Best Exchange", key="exchange_ai", use_container_width=True):
         req_hosp = next((h for h in hospitals if h["name"] == req_hosp_name), None)
         if req_hosp:
-            graph = build_hospital_graph(hospitals)
-            all_inventory = get_blood_units()
-            nearest = graph.nearest_hospitals_with_blood(req_hosp["id"], blood_grp, all_inventory)
+            graph = get_road_graph(hospitals)
+            nearest = [{**dataclasses.asdict(o), "route": [graph.nodes[n].name for n in o.path]}
+                       for o in find_sources(graph, req_hosp["id"], blood_grp, get_stock_by_hospital(), include_source=False)]
 
             if nearest:
-                st.markdown("<div style='font-size:0.9rem;font-weight:600;margin-bottom:8px;'>DSA Graph Results (Dijkstra-ranked):</div>", unsafe_allow_html=True)
+                st.markdown("<div style='font-size:0.9rem;font-weight:600;margin-bottom:8px;'>Road-network results (exact group first, then compatible groups):</div>", unsafe_allow_html=True)
                 dsa_rows = []
                 for r in nearest[:5]:
                     dsa_rows.append({
                         "Hospital": r["hospital_name"],
+                        "Sends": r["unit_group"] + (" (exact)" if r["exact"] else " (compatible)"),
                         "Distance": f"{r['distance_km']} km",
                         "Available Stock": f"{r['units_available']} units"
                     })
@@ -286,11 +296,13 @@ with tab5:
                         {
                             "hospital": r["hospital_name"],
                             "distance_km": r["distance_km"],
-                            "path": [graph.nodes.get(p, {}).get("name", str(p)) for p in r["path"]],
+                            "path": r["route"],
+                            "blood_group_sent": r["unit_group"],
                         }
                         for r in nearest[:3]
                     ]
-                    response = ai_exchange_advisor(req_hosp_name, blood_grp, units_req, nearest[:5], routes)
+                    donors_for_ai = [{k: v for k, v in r.items() if k not in ("path", "route")} for r in nearest[:5]]
+                    response = ai_exchange_advisor(req_hosp_name, blood_grp, units_req, donors_for_ai, routes)
                     log_ai_usage("exchange_advisor", f"{req_hosp_name}|{blood_grp}|{units_req}u", response, req_hosp["id"], _uid)
                     render_ai_response(response)
             else:

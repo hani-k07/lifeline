@@ -2,6 +2,7 @@
 """Emergency Blood Requests — LIFELINE v6.0"""
 from __future__ import annotations
 
+import dataclasses
 import html
 
 import pandas as pd
@@ -9,13 +10,16 @@ import streamlit as st
 
 st.set_page_config(page_title="Emergency — LIFELINE", layout="wide")
 
-from dsa_engine import BLOOD_GROUPS, TriageQueue, build_hospital_graph
+from lifeline.constants import BLOOD_GROUPS
+from lifeline.engine.routing import backup_hospitals, find_sources
+from lifeline.engine.triage import triage_order
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from lifeline.services.emergency import cancel_request, create_request, fulfil_request, reserve_units
 from utils.actions import attempt
 from utils.database import get_all_hospitals, get_blood_requests, get_reserved_counts
-from utils.database import get_blood_units as get_bu
+from utils.database import get_stock_by_hospital
+from utils.network import get_road_graph
 from utils.sidebar import render_sidebar
 from utils.styles import (
     alert_banner,
@@ -57,18 +61,13 @@ with tab1:
     closed = [r for r in requests if r.get("status") in ("RESOLVED", "CANCELLED")]
     reserved_counts = get_reserved_counts()
 
-    tq = TriageQueue()
-    priority_map = {"CRITICAL": 1, "URGENT": 2, "ROUTINE": 3}
-    for r in active:
-        tq.push(priority_map.get(r.get("urgency", "ROUTINE"), 3), r)
-
     section_header("Active Queue", f"{len(active)} open requests")
     queue_error = None
 
     if not active:
         alert_banner("No open emergency requests in the queue.", "success")
     else:
-        for req in tq.all_sorted():
+        for req in triage_order(active):
             rid, need = req["id"], req["units_needed"]
             have = reserved_counts.get(rid, 0)
             with st.container():
@@ -160,24 +159,35 @@ with tab3:
     if st.button("Find Nearest Blood Source", use_container_width=True):
         src_hosp = next((h for h in hospitals if h["name"] == src_name), None)
         if src_hosp:
-            graph = build_hospital_graph(hospitals)
+            graph = get_road_graph(hospitals)
+            options = find_sources(graph, src_hosp["id"], need_bg, get_stock_by_hospital())    # one Dijkstra run
             st.session_state["em_results"] = {
-                "group": need_bg, "units": int(need_units),
-                "rows": graph.nearest_hospitals_with_blood(src_hosp["id"], need_bg, get_bu()),
+                "group": need_bg, "units": int(need_units), "source_id": src_hosp["id"],
+                "rows": [{**dataclasses.asdict(o), "route": " → ".join(graph.nodes[n].name for n in o.path)} for o in options],
+                "backups": backup_hospitals(graph, src_hosp["id"]),
             }
 
     found = st.session_state.get("em_results")
     if found:
         if not found["rows"]:
-            alert_banner(f"No hospitals in the network have {found['group']} blood available.", "danger")
+            alert_banner(f"No hospital in the network holds blood that a {found['group']} patient can safely receive.", "danger")
         else:
-            alert_banner(f"Found {len(found['rows'])} hospitals with {found['group']} blood!", "success")
+            exact = sum(1 for r in found["rows"] if r["exact"])
+            alert_banner(f"{len(found['rows'])} source(s) found: {exact} with exact {found['group']}, "
+                         f"{len(found['rows']) - exact} with compatible groups.", "success")
             styled_table(pd.DataFrame([{
                 "Hospital": r["hospital_name"],
-                "Distance": f"{r['distance_km']} km",
+                "Sends": blood_badge(r["unit_group"]),
+                "Match": "exact" if r["exact"] else "compatible",
                 "Stock": f"{r['units_available']} units",
-                "ETA": f"~{int(round(r['distance_km'] / 5 * 15))} min",
-            } for r in found["rows"][:6]]))
+                "Distance": f"{r['distance_km']} km",
+                "ETA": f"~{int(round(r['eta_min']))} min",
+                "Route": r["route"],
+            } for r in found["rows"][:8]]))
+            if found["backups"]:
+                with st.expander("Backup hospitals (fewest road hops first)"):
+                    styled_table(pd.DataFrame([{"Hospital": b["name"], "Hops": b["level"], "Distance": f"{b['distance_km']} km"}
+                                               for b in found["backups"][:6]]))
 
             open_requests = [r for r in get_blood_requests(_scope)
                              if r["status"] in ("PENDING", "RESERVED") and r["blood_group"] == found["group"]]
@@ -186,10 +196,11 @@ with tab3:
                 labels = {f"#{r['id']} · {r['patient_name']} · {r['units_needed']}u {r['blood_group']}": r for r in open_requests}
                 chosen = labels[st.selectbox("Request", list(labels.keys()))]
                 reserve_error = None
-                for r in found["rows"][:6]:
+                for r in found["rows"][:8]:
                     take = min(chosen["units_needed"], r["units_available"])
-                    if st.button(f"Reserve {take} unit(s) from {r['hospital_name']}", key=f"resv_{r['hospital_id']}"):
-                        ok, reserve_error, _ = attempt(reserve_units, user, chosen["id"], r["hospital_id"], found["group"], take)
+                    label = f"Reserve {take} × {r['unit_group']} from {r['hospital_name']}"
+                    if st.button(label, key=f"resv_{r['hospital_id']}_{r['unit_group']}"):
+                        ok, reserve_error, _ = attempt(reserve_units, user, chosen["id"], r["hospital_id"], r["unit_group"], take)
                         if ok:
                             st.toast(f"Reserved {take} unit(s) at {r['hospital_name']}")
                             st.rerun()

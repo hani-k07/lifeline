@@ -8,14 +8,22 @@ BLOOD_COLORS = {
     "AB+": "#A855F7", "AB-": "#7C3AED", "O+": "#F59E0B", "O-": "#D97706"
 }
 
+_RED = ("#FF3D71", "rgba(255,61,113,0.15)")
+_AMBER = ("#FFB800", "rgba(255,184,0,0.15)")
+_GREEN = ("#00D68F", "rgba(0,214,143,0.15)")
+_BLUE = ("#0095FF", "rgba(0,149,255,0.15)")
+_GREY = ("#8892AA", "rgba(136,146,170,0.15)")
+
 STATUS_STYLES = {
-    "CRITICAL": ("CRITICAL", "#FF3D71", "rgba(255,61,113,0.15)"),
-    "URGENT":   ("URGENT",   "#FFB800", "rgba(255,184,0,0.15)"),
-    "ROUTINE":  ("ROUTINE",  "#00D68F", "rgba(0,214,143,0.15)"),
-    "PENDING":  ("PENDING",  "#0095FF", "rgba(0,149,255,0.15)"),
-    "RESOLVED": ("RESOLVED", "#00D68F", "rgba(0,214,143,0.15)"),
-    "EXPIRED":  ("EXPIRED",  "#4A5568", "rgba(74,85,104,0.15)"),
-    "ACTIVE":   ("ACTIVE",   "#00D68F", "rgba(0,214,143,0.15)"),
+    label: (label, *color)
+    for color, labels in (
+        (_RED, ("CRITICAL", "SEVERE", "BLOCK", "BREACHED", "REJECTED", "HIGH", "LAPSED")),
+        (_AMBER, ("URGENT", "MODERATE", "MILD", "DEFER", "UNKNOWN", "MEDIUM", "RESERVED", "ACCEPTED")),
+        (_GREEN, ("ROUTINE", "RESOLVED", "ACTIVE", "SAFE", "NONE", "LOW", "RETURNED", "COMPLETED", "CORE")),
+        (_BLUE, ("PENDING", "OCCASIONAL")),
+        (_GREY, ("EXPIRED", "CANCELLED")),
+    )
+    for label in labels
 }
 
 def get_theme() -> str:

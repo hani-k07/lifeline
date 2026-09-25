@@ -109,6 +109,12 @@ def get_expiring_units(hospital_id: int | None, days: int = 3) -> list[dict]:
         return units_repo.expiring_within(conn, hospital_id, today.isoformat(), (today + timedelta(days=days)).isoformat())
 
 
+def get_stock_by_hospital() -> dict[int, dict[str, int]]:
+    """hospital_id -> {blood_group: available unexpired units}, for routing."""
+    with _conn() as conn:
+        return units_repo.totals_by_hospital(conn, _today())
+
+
 def get_reserved_counts() -> dict[int, int]:
     """request_id -> number of units currently reserved for it."""
     with _conn() as conn:

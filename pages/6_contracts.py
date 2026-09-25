@@ -9,7 +9,8 @@ import streamlit as st
 
 st.set_page_config(page_title="Contracts — LIFELINE", layout="wide")
 
-from dsa_engine import BLOOD_GROUPS
+from lifeline.constants import BLOOD_GROUPS
+from lifeline.engine.sorting import merge_sort
 from lifeline import clock
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
@@ -53,7 +54,7 @@ names = {h["id"]: h["name"] for h in hospitals}
 tab1, tab2 = st.tabs(["Loans", "New Loan"])
 
 with tab1:
-    contracts = get_contracts(None if _role == Role.SUPER_ADMIN else _hosp_id)
+    contracts = merge_sort(get_contracts(None if _role == Role.SUPER_ADMIN else _hosp_id), key=lambda c: c["return_deadline"])
     if not contracts:
         alert_banner("No loans yet. Create one in the 'New Loan' tab.", "info")
     else:

@@ -136,3 +136,80 @@ def test_donor_registration_rejects_a_duplicate_cnic_and_masks_it_on_screen():
     tab_inputs["CNIC"].set_value("3520276543219")
     at = submit(at, "Register Donor")
     assert any("already registered" in e for e in errors(at)), errors(at)
+
+
+# ------------------------------------------------------------------ Phase 3: engine behaviour through the pages
+
+def test_screening_low_hemoglobin_is_deferred_and_the_donor_marked_ineligible():
+    """Audit P0: this used to come back SAFE."""
+    at = open_page("5_screening")
+    picker = widget(at, "selectbox", "Select Donor")
+    donor_label = picker.options[0]
+    picker.set_value(donor_label)
+    widget(at, "number_input", "Hemoglobin (g/dL)").set_value(9.0)
+    at = submit(at, "Run Screening")
+    assert not at.exception
+    page = " ".join(m.value for m in at.markdown)
+    assert "DEFER" in page and "Low Hemoglobin" in page
+    assert db("SELECT decision, risk_score FROM screening_tests ORDER BY id DESC LIMIT 1")[0][0] == "DEFER"
+    donor_name = donor_label.rsplit(" (", 1)[0]
+    assert db("SELECT eligible FROM donors WHERE name = ? AND hospital_id = 1", donor_name)[0][0] == 0
+
+
+def test_screening_lists_every_rule_that_fired():
+    at = open_page("5_screening")
+    picker = widget(at, "selectbox", "Select Donor")
+    picker.set_value(picker.options[0])
+    widget(at, "number_input", "Hemoglobin (g/dL)").set_value(9.0)
+    widget(at, "number_input", "Temperature (°C)").set_value(38.6)
+    widget(at, "number_input", "Pulse (bpm)").set_value(120)
+    at = submit(at, "Run Screening")
+    page = " ".join(m.value for m in at.markdown)
+    for rule in ("Low Hemoglobin", "Fever", "Pulse Out Of Range"):
+        assert rule in page, rule
+
+
+def test_reaction_monitor_flags_low_oxygen_as_critical():
+    """Audit P0: SpO2 84 % used to be reported as 'NORMAL, transfusion proceeding normally'."""
+    at = open_page("7_transfusion")
+    at.number_input(key="post_o2").set_value(84.0)
+    at = submit(at, "Analyse Reaction")
+    assert not at.exception
+    page = " ".join(m.value for m in at.markdown)
+    assert "CRITICAL" in page and "STOP the transfusion" in page and "proceeding normally" not in page
+
+
+def test_reaction_monitor_normal_readings_show_no_findings():
+    at = open_page("7_transfusion")
+    at = submit(at, "Analyse Reaction")
+    page = " ".join(m.value for m in at.markdown)
+    assert "NONE" in page and "STOP" not in page
+
+
+def test_find_blood_offers_compatible_groups_and_reserves_them():
+    """Audit: routing used to match the exact blood group only (an O- unit never appeared for an A+ patient)."""
+    at = open_page("3_emergency")
+    widget(at, "text_input", "Patient Name").set_value("Route Patient")
+    at = submit(at, "Submit Emergency Request")
+    at.selectbox(key="find_bg").set_value("A+")
+    at = submit(at.run(), "Find Nearest Blood Source")
+    rows = at.session_state["em_results"]["rows"]
+    assert rows and rows[0]["exact"] and rows[0]["unit_group"] == "A+"
+    assert {r["unit_group"] for r in rows} <= {"A+", "A-", "O+", "O-"}          # never an incompatible group
+    assert any(not r["exact"] for r in rows)                                       # compatible substitutes are offered too
+    assert [r["distance_km"] for r in rows if r["exact"]] == sorted(r["distance_km"] for r in rows if r["exact"])
+    assert all(r["route"] for r in rows)
+
+
+def test_analytics_uses_real_usage_and_shows_the_donor_segments():
+    at = open_page("8_analytics", role="super_admin", hospital_id=None)
+    assert not at.exception
+    page = " ".join(m.value for m in at.markdown)
+    assert "Donor segments" in page and "Shortage outlook" in page
+    assert "Core" in page or "Occasional" in page
+
+
+def test_exchange_page_shows_network_suggestions_without_error():
+    at = open_page("4_exchange", role="super_admin", hospital_id=None)
+    assert not at.exception
+    assert any("Suggested transfers" in m.value for m in at.markdown)
