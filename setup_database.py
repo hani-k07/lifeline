@@ -1,16 +1,22 @@
 # setup_database.py
 """
 LIFELINE v6.0 — Database Setup & Seeding
-Run once: python setup_database.py
+
+    python setup_database.py           create + seed a new DB, or migrate an existing one (non-destructive)
+    python setup_database.py --reset   delete the DB and reseed it
 """
 from __future__ import annotations
+import argparse
 import sqlite3
 import hashlib
-from pathlib import Path
 from datetime import datetime, timedelta
 import random
 
-DB_PATH = Path(__file__).parent / "lifeline.db"
+from lifeline.auth.roles import Role
+from lifeline.config import get_settings
+from lifeline.db.migrate import LATEST_VERSION, apply_migrations
+
+DB_PATH = get_settings().db_path
 BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
 
 
@@ -165,7 +171,15 @@ def create_schema(conn: sqlite3.Connection) -> None:
         user_id     INTEGER REFERENCES users(id),
         created_at  TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS login_throttle (
+        email        TEXT PRIMARY KEY,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        locked_until INTEGER NOT NULL DEFAULT 0,
+        updated_at   INTEGER NOT NULL
+    );
     """)
+    conn.execute(f"PRAGMA user_version = {LATEST_VERSION}")   # fresh schema already includes every migration
     conn.commit()
 
 
@@ -191,17 +205,17 @@ def seed_users(conn: sqlite3.Connection) -> None:
     now = datetime.now().isoformat(timespec="seconds")
     pw = hash_password("lifeline123")
     users = [
-        ("admin@lifeline.com",            pw, "super_admin",    "Dr. Zara Ahmed (Admin)",          now, None),
-        ("mayo@lifeline.com",             pw, "hospital_admin", "Dr. Kamran Sheikh (Mayo)",         now, 1),
-        ("services@lifeline.com",         pw, "hospital_admin", "Dr. Amna Malik (Services)",        now, 2),
-        ("jinnah@lifeline.com",           pw, "hospital_admin", "Dr. Bilal Hassan (Jinnah)",        now, 3),
-        ("shaukat@lifeline.com",          pw, "hospital_admin", "Dr. Sara Yousaf (Shaukat)",        now, 4),
-        ("mayo.worker@lifeline.com",      pw, "staff",    "Nurse Hira Baig (Mayo)",           now, 1),
-        ("mayo.worker2@lifeline.com",     pw, "staff",    "Technician Saad Ali (Mayo)",       now, 1),
-        ("services.worker@lifeline.com",  pw, "staff",    "Nurse Rabia Naz (Services)",       now, 2),
-        ("jinnah.worker@lifeline.com",    pw, "staff",    "Technician Umar Farooq (Jinnah)",  now, 3),
-        ("shaukat.worker@lifeline.com",   pw, "staff",    "Nurse Fatima Zia (Shaukat)",       now, 4),
-        ("shaukat.worker2@lifeline.com",  pw, "staff",    "Technician Ali Hamza (Shaukat)",   now, 4),
+        ("admin@lifeline.com",            pw, Role.SUPER_ADMIN.value, "Dr. Zara Ahmed (Admin)",          now, None),
+        ("mayo@lifeline.com",             pw, Role.HOSPITAL_ADMIN.value, "Dr. Kamran Sheikh (Mayo)",         now, 1),
+        ("services@lifeline.com",         pw, Role.HOSPITAL_ADMIN.value, "Dr. Amna Malik (Services)",        now, 2),
+        ("jinnah@lifeline.com",           pw, Role.HOSPITAL_ADMIN.value, "Dr. Bilal Hassan (Jinnah)",        now, 3),
+        ("shaukat@lifeline.com",          pw, Role.HOSPITAL_ADMIN.value, "Dr. Sara Yousaf (Shaukat)",        now, 4),
+        ("mayo.worker@lifeline.com",      pw, Role.STAFF.value, "Nurse Hira Baig (Mayo)",           now, 1),
+        ("mayo.worker2@lifeline.com",     pw, Role.STAFF.value, "Technician Saad Ali (Mayo)",       now, 1),
+        ("services.worker@lifeline.com",  pw, Role.STAFF.value, "Nurse Rabia Naz (Services)",       now, 2),
+        ("jinnah.worker@lifeline.com",    pw, Role.STAFF.value, "Technician Umar Farooq (Jinnah)",  now, 3),
+        ("shaukat.worker@lifeline.com",   pw, Role.STAFF.value, "Nurse Fatima Zia (Shaukat)",       now, 4),
+        ("shaukat.worker2@lifeline.com",  pw, Role.STAFF.value, "Technician Ali Hamza (Shaukat)",   now, 4),
     ]
     conn.executemany(
         "INSERT OR IGNORE INTO users (email,password_hash,role,name,created_at,hospital_id) VALUES (?,?,?,?,?,?)",
@@ -281,13 +295,22 @@ def seed_audit_logs(conn: sqlite3.Connection) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Create/seed or migrate the LIFELINE database.")
+    parser.add_argument("--reset", action="store_true", help="delete the existing database and reseed it")
+    args = parser.parse_args()
+
     print("[*] LIFELINE v6.0 -- Database Setup")
-    if DB_PATH.exists():
-        answer = input("   [!] Database already exists. Delete and reseed? (yes/no): ").strip().lower()
-        if answer != "yes":
-            print("   -> Aborted. Existing database kept.")
-            return
+    if DB_PATH.exists() and not args.reset:
+        conn = sqlite3.connect(DB_PATH)
+        applied = apply_migrations(conn)
+        conn.close()
+        print(f"   -> Existing database kept ({'migrated to v' + str(applied[-1]) if applied else 'already up to date'}).")
+        print("   -> Use --reset to delete and reseed it.")
+        return
+    if args.reset and DB_PATH.exists():
         DB_PATH.unlink()
+        for suffix in ("-wal", "-shm", "-journal"):
+            DB_PATH.with_name(DB_PATH.name + suffix).unlink(missing_ok=True)
         print("   -> Old database deleted.")
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -306,7 +329,8 @@ def main() -> None:
     print("   -> Seeding audit logs...")
     seed_audit_logs(conn)
     conn.close()
-    print("\n[+] Database ready: lifeline.db")
+    print()
+    print("[+] Database ready: lifeline.db")
     print("   Run: streamlit run app.py")
 
 

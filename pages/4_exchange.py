@@ -12,6 +12,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table,
 )
+from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_exchanges, add_exchange,
@@ -47,7 +48,7 @@ with tab1:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        if _role == "admin":
+        if _role == Role.SUPER_ADMIN:
             src_name = st.selectbox("From Hospital (Requesting)", [h["name"] for h in hospitals])
         else:
             src_name = _hosp_name
@@ -110,7 +111,7 @@ with tab1:
                 st.divider()
 
 with tab2:
-    exchanges = get_exchanges(_hosp_id if _role != "admin" else None)
+    exchanges = get_exchanges(_hosp_id if _role != Role.SUPER_ADMIN else None)
     if not exchanges:
         alert_banner("No exchange transactions recorded yet.", "info")
     else:

@@ -12,6 +12,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table,
 )
+from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_blood_requests, add_blood_request,
@@ -44,7 +45,7 @@ tab1, tab2, tab3 = st.tabs(["Active Queue", "New Request", "Find Blood"])
 
 # ── Tab 1: Queue ──
 with tab1:
-    requests = get_blood_requests(_hosp_id if _role != "admin" else None)
+    requests = get_blood_requests(_hosp_id if _role != Role.SUPER_ADMIN else None)
     pending = [r for r in requests if r.get("status") == "PENDING"]
     resolved = [r for r in requests if r.get("status") == "RESOLVED"]
 
@@ -74,7 +75,7 @@ with tab1:
                 c3.markdown(f"{blood_badge(bg)} <span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem'>× {req.get('units_needed','?')}u</span>", unsafe_allow_html=True)
                 c4.markdown(f"<div style='font-size:0.75rem;color:var(--text-secondary)'>{hosp}</div><div style='font-size:0.68rem;color:var(--text-muted)'>{ts}</div>", unsafe_allow_html=True)
                 
-                if _role in ("admin", "hospital"):
+                if _role in (Role.SUPER_ADMIN, Role.HOSPITAL_ADMIN):
                     if c5.button("Resolve", key=f"res_{req['id']}"):
                         resolve_blood_request(req["id"])
                         add_audit_log("EMERGENCY_RESOLVED", f"Resolved request for {pt} — {bg}", _uid)
@@ -114,7 +115,7 @@ with tab2:
         patient_name = st.text_input("Patient Name")
         condition = st.text_area("Patient Condition / Notes", placeholder="e.g. Trauma surgery, O- required")
 
-        if _role == "admin":
+        if _role == Role.SUPER_ADMIN:
             hospitals = get_all_hospitals()
             hosp_map = {h["name"]: h["id"] for h in hospitals}
             sel_h = st.selectbox("Requesting Hospital", list(hosp_map.keys()))

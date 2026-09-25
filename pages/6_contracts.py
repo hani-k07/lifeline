@@ -12,6 +12,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table, metric_card,
 )
+from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_contracts, add_contract, add_audit_log,
@@ -39,7 +40,7 @@ st.markdown("""
     </p>
 </div>""", unsafe_allow_html=True)
 
-if _role == "admin":
+if _role == Role.SUPER_ADMIN:
     hospitals = get_all_hospitals()
     hosp_map = {h["name"]: h["id"] for h in hospitals}
     sel_name = st.selectbox("Hospital", list(hosp_map.keys()))
@@ -51,7 +52,7 @@ else:
 tab1, tab2 = st.tabs(["Active Contracts", "New Contract"])
 
 with tab1:
-    contracts = get_contracts(sel_hosp_id if _role != "admin" else None)
+    contracts = get_contracts(sel_hosp_id if _role != Role.SUPER_ADMIN else None)
     if not contracts:
         alert_banner("No contracts found. Create a contract using the 'New Contract' tab.", "info")
     else:
@@ -96,7 +97,7 @@ with tab1:
         styled_table(df_show)
 
 with tab2:
-    if _role == "staff":
+    if _role == Role.STAFF:
         alert_banner("Staff cannot create contracts. Contact your Hospital Admin.", "danger")
     else:
         section_header("New Vendor Contract")

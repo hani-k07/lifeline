@@ -13,6 +13,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table, metric_card,
 )
+from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_all_users, get_audit_logs,
@@ -29,7 +30,7 @@ render_sidebar()
 _role = st.session_state.get("user_role", "")
 _uid = int(st.session_state.get("user_id", 0))
 
-if _role != "admin":
+if _role != Role.SUPER_ADMIN:
     alert_banner("Access denied. This page is restricted to Super Admins only.", "danger")
     st.stop()
 
@@ -79,7 +80,7 @@ with tab1:
         with col1:
             new_email = st.text_input("Email *")
             new_name = st.text_input("Full Name *")
-            new_role = st.selectbox("Role", ["staff", "hospital", "admin"])
+            new_role = st.selectbox("Role", [r.value for r in Role], format_func=lambda v: Role(v).label, index=2)
         with col2:
             new_password = st.text_input("Password *", type="password", value="lifeline123")
             hospitals = get_all_hospitals()

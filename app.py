@@ -2,6 +2,7 @@
 """LIFELINE v6.0 — Intelligent Blood Logistics Network (Pure Python / SQLite Edition)."""
 
 import streamlit as st
+from lifeline.bootstrap import ensure_ready
 from utils.styles import inject_all_styles, get_theme, render_ecg, render_login_sidebar, alert_banner
 from utils.auth import validate_login
 from utils.database import get_hospital_by_id
@@ -11,6 +12,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+ensure_ready()
 
 # Redirect if already logged in
 if st.session_state.get("logged_in"):

@@ -12,6 +12,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table, metric_card,
 )
+from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_transfusions, add_transfusion,
@@ -40,7 +41,7 @@ st.markdown("""
     </p>
 </div>""", unsafe_allow_html=True)
 
-if _role == "admin":
+if _role == Role.SUPER_ADMIN:
     hospitals = get_all_hospitals()
     hosp_map = {h["name"]: h["id"] for h in hospitals}
     sel_name = st.selectbox("Hospital", list(hosp_map.keys()))

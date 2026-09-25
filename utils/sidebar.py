@@ -3,20 +3,24 @@ import html
 
 import streamlit as st
 
+from lifeline.auth.roles import ADMIN_ROLES, ALL_ROLES, Role
+from lifeline.bootstrap import ensure_ready
+
 PAGE_LINKS = [
-    ("pages/1_dashboard.py",   "Dashboard",   ["admin","hospital","staff"]),
-    ("pages/2_inventory.py",   "Inventory",   ["admin","hospital","staff"]),
-    ("pages/3_emergency.py",   "Emergency",   ["admin","hospital","staff"]),
-    ("pages/4_exchange.py",    "Exchange",    ["admin","hospital","staff"]),
-    ("pages/5_screening.py",   "Screening",   ["admin","hospital","staff"]),
-    ("pages/6_contracts.py",   "Contracts",   ["admin","hospital","staff"]),
-    ("pages/7_transfusion.py", "Transfusion", ["admin","hospital","staff"]),
-    ("pages/8_analytics.py",   "Analytics",   ["admin","hospital","staff"]),
-    ("pages/9_ai_center.py",   "AI Center",   ["admin","hospital"]),
-    ("pages/10_admin.py",      "Admin Panel", ["admin"]),
+    ("pages/1_dashboard.py",   "Dashboard",   ALL_ROLES),
+    ("pages/2_inventory.py",   "Inventory",   ALL_ROLES),
+    ("pages/3_emergency.py",   "Emergency",   ALL_ROLES),
+    ("pages/4_exchange.py",    "Exchange",    ALL_ROLES),
+    ("pages/5_screening.py",   "Screening",   ALL_ROLES),
+    ("pages/6_contracts.py",   "Contracts",   ALL_ROLES),
+    ("pages/7_transfusion.py", "Transfusion", ALL_ROLES),
+    ("pages/8_analytics.py",   "Analytics",   ALL_ROLES),
+    ("pages/9_ai_center.py",   "AI Center",   ADMIN_ROLES),
+    ("pages/10_admin.py",      "Admin Panel", (Role.SUPER_ADMIN,)),
 ]
 
 def render_sidebar() -> None:
+    ensure_ready()
     role  = st.session_state.get("user_role", "")
     name  = st.session_state.get("user_name", "User")
     hosp  = st.session_state.get("user_hospital_name", "Global")

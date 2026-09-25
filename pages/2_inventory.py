@@ -13,6 +13,7 @@ from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
     blood_badge, status_pill, styled_table, chart_template, chart_font,
 )
+from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_blood_units, add_blood_units,
@@ -43,7 +44,7 @@ st.markdown("""
 BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
 
 # ── Hospital selection ──
-if _role == "admin":
+if _role == Role.SUPER_ADMIN:
     hospitals = get_all_hospitals()
     hosp_map = {h["name"]: h["id"] for h in hospitals}
     sel_hosp_name = st.selectbox("Select Hospital", list(hosp_map.keys()))
