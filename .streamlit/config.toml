@@ -1,9 +1,18 @@
 [client]
-# Navigation is rendered by utils/sidebar.py (role-filtered); hide Streamlit's built-in page list.
+# Navigation is rendered by lifeline/ui/layout.py (role-filtered); hide Streamlit's built-in page list.
 showSidebarNavigation = false
+# Never show a traceback to a user; lifeline.ui.layout.guard() shows a friendly message and logs the details.
+showErrorDetails = "none"
+toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
 
 [theme]
+# Matches lifeline/ui/tokens.py (dark). Light mode is applied by the app's own stylesheet.
 base = "dark"
+primaryColor = "#D9153F"
+backgroundColor = "#0D0A33"
+secondaryBackgroundColor = "#16124A"
+textColor = "#F4F5FF"
+font = "sans serif"
