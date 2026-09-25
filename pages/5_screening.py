@@ -12,6 +12,7 @@ from utils.styles import (
     blood_badge, status_pill, styled_table, metric_card,
 )
 from lifeline.auth.rbac import require_page
+from lifeline.privacy import mask_cnic
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
@@ -72,7 +73,7 @@ with tab1:
             registry_rows.append({
                 "Name": d.get("name", "—"),
                 "Blood Group": blood_badge(d.get("blood_group", "?")),
-                "CNIC": d.get("cnic", "—"),
+                "CNIC": mask_cnic(d.get("cnic")),
                 "Phone": d.get("phone", "—"),
                 "Last Donated": d.get("last_donated", "—"),
                 "Eligible": status_pill("ACTIVE" if d.get("eligible") == 1 else "EXPIRED")

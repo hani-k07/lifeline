@@ -2,8 +2,10 @@
 """AI Intelligence Hub — LIFELINE v6.0"""
 from __future__ import annotations
 
-import streamlit as st
+import html
 import random
+
+import streamlit as st
 import pandas as pd
 from datetime import datetime
 
@@ -14,10 +16,11 @@ from utils.styles import (
     blood_badge, status_pill, styled_table, metric_card, render_ai_response,
 )
 from lifeline.auth.rbac import require_page
+from lifeline.privacy import scrub_rows, scrub_text
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_blood_units, get_blood_requests,
-    get_transfusions, get_audit_logs, get_inventory_changes, log_ai_usage,
+    get_transfusions, get_audit_logs, get_inventory_changes, log_ai_usage, get_person_names,
 )
 from ai_engine import (
     ai_demand_forecast, ai_emergency_triage,
@@ -107,8 +110,9 @@ with tab2:
         alert_banner("No pending emergency requests in the queue.", "success")
     else:
         req_rows = []
-        for r in pending:
+        for i, r in enumerate(pending, start=1):
             req_rows.append({
+                "Ref": f"Patient {i}",
                 "Patient": r.get("patient_name", "—"),
                 "Blood Group": blood_badge(r.get("blood_group", "?")),
                 "Units Needed": f"{r.get('units_needed', 0)}u",
@@ -126,15 +130,17 @@ with tab2:
         st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
         if st.button("AI Triage Analysis", key="triage_ai", use_container_width=True):
+            known_names = get_person_names()
+            # Patients go to the LLM as "Patient N" (N matches the Ref column above), never by name.
             patient_list = [
                 {
-                    "patient": r.get("patient_name", "Unknown"),
+                    "patient": f"Patient {i}",
                     "blood_group": r["blood_group"],
                     "units_needed": r["units_needed"],
                     "urgency": r.get("urgency", "ROUTINE"),
-                    "condition": r.get("patient_condition", "Not specified"),
+                    "condition": scrub_text(r.get("patient_condition") or "Not specified", known_names),
                 }
-                for r in pending[:10]
+                for i, r in enumerate(pending[:10], start=1)
             ]
             with st.spinner("AI prioritising emergency queue..."):
                 response = ai_emergency_triage(patient_list, stock_summary)
@@ -172,13 +178,13 @@ with tab3:
         for msg in st.session_state.chat_history:
             if msg["role"] == "user":
                 st.markdown(
-                    f"<div class='chat-bubble-user'>{msg['content']}</div>"
+                    f"<div class='chat-bubble-user'>{html.escape(msg['content'])}</div>"
                     "<div style='height:10px;'></div>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
-                    f"<div class='chat-bubble-ai'>{msg['content']}</div>"
+                    f"<div class='chat-bubble-ai'>{html.escape(msg['content'])}</div>"
                     "<div style='height:10px;'></div>",
                     unsafe_allow_html=True,
                 )
@@ -187,9 +193,12 @@ with tab3:
     if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "user":
         latest_user_msg = st.session_state.chat_history[-1]["content"]
         with st.spinner("Thinking..."):
-            reply = ai_chatbot(latest_user_msg, context, st.session_state.chat_history[:-1])
+            names = get_person_names()
+            safe_question = scrub_text(latest_user_msg, names)      # patient/donor/staff names never leave the app
+            safe_history = [{**m, "content": scrub_text(m["content"], names)} for m in st.session_state.chat_history[:-1]]
+            reply = ai_chatbot(safe_question, context, safe_history)
             st.session_state.chat_history.append({"role": "assistant", "content": reply})
-            log_ai_usage("chatbot", latest_user_msg[:100], reply, _hosp_id, _uid)
+            log_ai_usage("chatbot", safe_question[:100], reply, _hosp_id, _uid)
             st.rerun()
 
     # ── Input form (works reliably inside tabs, unlike st.chat_input) ──
@@ -220,9 +229,21 @@ with tab4:
 
     if st.button("Run Anomaly Scan", key="anomaly_ai", use_container_width=True):
         with st.spinner("Scanning logs for anomalies..."):
-            transfusions = get_transfusions(_hosp_id)
-            audit = get_audit_logs(50)
-            inv_changes = get_inventory_changes(_hosp_id, 30)
+            names = get_person_names()
+            transfusions = scrub_rows(
+                get_transfusions(_hosp_id),
+                keep=("id", "hospital_name", "blood_group", "units", "transfused_at"),
+                text_fields=("notes",), names=names,
+            )
+            audit = scrub_rows(
+                get_audit_logs(50), keep=("action_type", "timestamp", "user_id"),
+                text_fields=("description",), names=names,
+            )
+            inv_changes = scrub_rows(
+                get_inventory_changes(_hosp_id, 30),
+                keep=("hospital_id", "blood_group", "change_type", "units_delta", "changed_at", "changed_by"),
+                text_fields=("reason",), names=names,
+            )
             response = ai_anomaly_detection(transfusions, audit, inv_changes)
             log_ai_usage("anomaly_detection", "log_scan", response, _hosp_id, _uid)
             render_ai_response(response)

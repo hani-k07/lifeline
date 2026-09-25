@@ -5,16 +5,15 @@ Powers: Demand Forecasting, Emergency Triage, Chatbot Assistant, Anomaly Detecti
 Model: meta-llama/llama-3.3-70b-instruct (free tier on OpenRouter)
 """
 from __future__ import annotations
-import os
 import json
 import requests
 from datetime import datetime
-from dotenv import load_dotenv
 
-load_dotenv(override=True)
+from lifeline.config import get_settings
+from lifeline.privacy import scrub_text
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+DEFAULT_MODEL = get_settings().openrouter_model
 FALLBACK_MODELS = [
     "mistralai/mistral-7b-instruct:free",
     "google/gemma-3-27b-it:free",
@@ -23,9 +22,7 @@ FALLBACK_MODELS = [
 ]
 
 def _get_api_key() -> str:
-    """Always read fresh from .env to pick up any key changes without restart."""
-    load_dotenv(override=True)
-    return os.getenv("OPENROUTER_API_KEY", "")
+    return get_settings().openrouter_api_key.get_secret_value().strip()
 
 
 def _call_openrouter(system_prompt: str, user_message: str, temperature: float = 0.3) -> str:
@@ -50,7 +47,7 @@ def _call_openrouter(system_prompt: str, user_message: str, temperature: float =
                 "max_tokens": 1000,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "user", "content": scrub_text(user_message)},   # last line of defence: CNIC/phone/email
                 ],
             }
             resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
@@ -184,8 +181,8 @@ Rules:
 
     messages = []
     if chat_history:
-        messages.extend(chat_history[-6:])  # last 3 turns for context window efficiency
-    messages.append({"role": "user", "content": question})
+        messages.extend({**m, "content": scrub_text(str(m.get("content", "")))} for m in chat_history[-6:])
+    messages.append({"role": "user", "content": scrub_text(question)})
 
     OPENROUTER_API_KEY = _get_api_key()
     if not OPENROUTER_API_KEY:

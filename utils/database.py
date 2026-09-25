@@ -373,6 +373,17 @@ def add_user(email: str, password_hash: str, role: str, name: str,
             raise
 
 
+def get_person_names() -> list[str]:
+    """Every patient/donor/staff name in the system, so free text can be scrubbed before it leaves the app."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT patient_name AS n FROM blood_requests UNION SELECT patient_name FROM transfusions "
+            "UNION SELECT performed_by FROM transfusions UNION SELECT name FROM donors "
+            "UNION SELECT name FROM users UNION SELECT name FROM patients"
+        ).fetchall()
+    return [r["n"] for r in rows if r["n"]]
+
+
 def update_password_hash(user_id: int, password_hash: str) -> None:
     with _conn() as conn:
         conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))

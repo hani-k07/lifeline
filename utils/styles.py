@@ -684,7 +684,7 @@ def render_ecg() -> None:
 def render_ai_response(text: str) -> None:
     # Convert simple markdown **bold** to HTML strong tags
     import re
-    formatted = text
+    formatted = html.escape(text)          # model output is untrusted: escape first, then add our own markup
     # Replace **text** with <strong>text</strong>
     formatted = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', formatted)
     # Replace newlines with <br>
