@@ -93,9 +93,7 @@ with tab1:
                     "Requested": r["created_at"][:16].replace("T", " ") if r.get("created_at") else "—",
                     "Resolved": r["resolved_at"][:16].replace("T", " ") if r.get("resolved_at") else "—"
                 })
-            df_r = pd.DataFrame(resolved_rows)
-            styler = df_r.style.set_table_attributes('class="lifeline-table"')
-            st.markdown(styler.to_html(escape=False), unsafe_allow_html=True)
+            styled_table(pd.DataFrame(resolved_rows))
 
 # ── Tab 2: New Request ──
 with tab2:
@@ -176,9 +174,7 @@ with tab3:
                         "Stock": f"{r['units_available']} units",
                         "ETA": f"~{int(eta)} min"
                     })
-                df_near = pd.DataFrame(rows)
-                styler = df_near.style.set_table_attributes('class="lifeline-table"')
-                st.markdown(styler.to_html(escape=False), unsafe_allow_html=True)
+                styled_table(pd.DataFrame(rows))
             else:
                 alert_banner(f"No hospitals in the network have {need_bg} blood available.", "danger")
 

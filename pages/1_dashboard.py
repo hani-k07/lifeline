@@ -128,9 +128,7 @@ with col_map:
         })
     
     if network_data:
-        df_net = pd.DataFrame(network_data)
-        styler = df_net.style.set_table_attributes('class="lifeline-table"')
-        st.markdown(styler.to_html(escape=False), unsafe_allow_html=True)
+        styled_table(pd.DataFrame(network_data))
     else:
         alert_banner("No hospital network data to display.", "info")
 
@@ -154,9 +152,7 @@ with col_table:
                 "Blood Group": blood_badge(bg),
                 "Urgency": status_pill(ug)
             })
-        df_req = pd.DataFrame(req_data)
-        styler = df_req.style.set_table_attributes('class="lifeline-table"')
-        st.markdown(styler.to_html(escape=False), unsafe_allow_html=True)
+        styled_table(pd.DataFrame(req_data))
     else:
         alert_banner("No pending emergency requests.", "success")
 

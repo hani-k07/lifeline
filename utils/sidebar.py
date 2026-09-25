@@ -1,4 +1,6 @@
 # utils/sidebar.py
+import html
+
 import streamlit as st
 
 PAGE_LINKS = [
@@ -24,9 +26,9 @@ def render_sidebar() -> None:
         st.markdown(f"""
         <div style="padding:8px 0 16px">
             <div class="sidebar-logo">LIFELINE</div>
-            <div style="font-size:0.78rem;color:var(--text-secondary);margin:2px 0">{name}</div>
-            <div style="font-size:0.72rem;color:var(--text-muted)">{hosp}</div>
-            <span class="sidebar-role-badge">{role.upper()}</span>
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin:2px 0">{html.escape(name)}</div>
+            <div style="font-size:0.72rem;color:var(--text-secondary)">{html.escape(hosp)}</div>
+            <span class="sidebar-role-badge">{html.escape(role.upper())}</span>
         </div>""", unsafe_allow_html=True)
 
         st.divider()
@@ -47,8 +49,8 @@ def render_sidebar() -> None:
                 st.session_state.clear()
                 st.switch_page("app.py")
 
-        st.markdown(f"""
-        <div style="position:fixed;bottom:20px;left:0;width:240px;text-align:center;
-                    font-size:0.65rem;color:var(--text-muted);font-family:'JetBrains Mono',monospace">
+        st.markdown("""
+        <div style="margin-top:32px;text-align:center;font-size:0.65rem;color:var(--text-secondary);
+                    font-family:'JetBrains Mono',monospace">
             LIFELINE v6.0 · NASTP-NIIT<br>Dept. of Artificial Intelligence
         </div>""", unsafe_allow_html=True)

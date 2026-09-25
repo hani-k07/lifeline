@@ -13,7 +13,7 @@ st.set_page_config(page_title="Analytics — LIFELINE", layout="wide")
 
 from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
-    blood_badge, status_pill, styled_table, metric_card,
+    blood_badge, status_pill, styled_table, metric_card, chart_template, chart_font,
 )
 from utils.sidebar import render_sidebar
 from utils.database import (
@@ -86,16 +86,16 @@ with tab1:
         df_bg = pd.DataFrame(list(summary.items()), columns=["Blood Group", "Units"]).sort_values("Units", ascending=False)
         fig1 = px.bar(df_bg, x="Blood Group", y="Units", color="Units",
                       color_continuous_scale=["#1a0533", "#ff416c"],
-                      template="plotly_dark", title="Stock by Blood Group")
-        fig1.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      template=chart_template(), title="Stock by Blood Group")
+        fig1.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), plot_bgcolor="rgba(0,0,0,0)",
                            coloraxis_showscale=False, height=320, margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, use_container_width=True, theme=None)
 
         # Donut chart
         fig2 = px.pie(df_bg, values="Units", names="Blood Group", hole=0.5,
-                      template="plotly_dark", title="Distribution")
-        fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=320, margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig2, use_container_width=True)
+                      template=chart_template(), title="Distribution")
+        fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), height=320, margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig2, use_container_width=True, theme=None)
     else:
         alert_banner("No inventory data to display.", "info")
 
@@ -135,11 +135,11 @@ with tab2:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=days_hist, y=historical, name="Historical", line=dict(color="#64b5f6", width=2)))
         fig.add_trace(go.Scatter(x=days_fore, y=forecast, name="Forecast (WMA)", line=dict(color="#ff416c", width=2, dash="dash")))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          template="plotly_dark", height=350,
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), plot_bgcolor="rgba(0,0,0,0)",
+                          template=chart_template(), height=350,
                           title=f"Usage Forecast — {fg_bg} at {sel_name}",
                           xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, theme=None)
 
         if risk["risk_level"] in ("CRITICAL", "HIGH"):
             alert_banner(f"Reorder {risk['recommended_reorder']} units of {fg_bg} — stockout in {risk['days_until_stockout']} days!", "danger")
@@ -166,11 +166,11 @@ with tab3:
             mapbox_style="carto-darkmatter",
             zoom=11, center={"lat": 31.52, "lon": 74.34},
             title="Lahore Hospital Blood Network",
-            template="plotly_dark",
+            template=chart_template(),
         )
-        fig_map.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=500,
+        fig_map.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), height=500,
                               margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig_map, use_container_width=True)
+        st.plotly_chart(fig_map, use_container_width=True, theme=None)
 
         # Distance matrix
         with st.expander("Haversine Distance Matrix (km)"):

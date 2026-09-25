@@ -1,0 +1,9 @@
+[client]
+# Navigation is rendered by utils/sidebar.py (role-filtered); hide Streamlit's built-in page list.
+showSidebarNavigation = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"

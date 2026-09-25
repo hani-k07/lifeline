@@ -47,6 +47,7 @@ def get_full_css(theme: str = "dark") -> str:
     --ai-green:       {'#00FFB2' if is_dark else '#047857'};
     --shadow-card:    {'0 4px 24px rgba(0,0,0,0.4)' if is_dark else '0 2px 12px rgba(0,0,0,0.08)'};
     --glass-bg:       {'rgba(15,20,33,0.75)' if is_dark else 'rgba(255,255,255,0.8)'};
+    color-scheme:     {'dark' if is_dark else 'light'};
 }}
 
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -410,6 +411,52 @@ div[data-testid="stForm"] {{
 ::-webkit-scrollbar-thumb {{ background: var(--border-default); border-radius: 9999px; }}
 ::-webkit-scrollbar-thumb:hover {{ background: var(--red-bright); }}
 
+/* ── Bridge: Streamlit renders links/labels/popups with its own (dark) theme colours ── */
+[data-testid="stMarkdownContainer"] {{ color: var(--text-primary); }}
+[data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4, h5, h6, strong, em) {{ color: inherit; }}
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
+[data-testid="stCheckbox"] label, [data-testid="stCheckbox"] label p,
+[data-testid="stRadio"] label, [data-testid="stRadio"] label p,
+[data-testid="stExpander"] summary, [data-testid="stExpander"] summary p {{ color: var(--text-primary) !important; }}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color: var(--text-secondary) !important; }}
+[data-testid="stPageLink-NavLink"], [data-testid="stPageLink-NavLink"] p {{ color: var(--text-primary) !important; }}
+[data-testid="stPageLink-NavLink"]:hover, [data-testid="stPageLink-NavLink"][aria-current="page"] {{
+    background: var(--bg-hover) !important;
+}}
+[data-testid="stExpander"] details {{ background: var(--bg-surface); border-color: var(--border-subtle) !important; }}
+[data-testid="stForm"] {{ background: var(--bg-surface); }}
+div[data-baseweb="popover"] > div, [data-baseweb="menu"], ul[role="listbox"] {{
+    background: var(--bg-surface) !important;
+    color: var(--text-primary) !important;
+}}
+[data-baseweb="menu"] li, ul[role="listbox"] li, ul[role="listbox"] li * {{ color: var(--text-primary) !important; }}
+[data-baseweb="menu"] li:hover, ul[role="listbox"] li[aria-selected="true"], ul[role="listbox"] li:hover {{ background: var(--bg-hover) !important; }}
+[data-baseweb="calendar"], [data-baseweb="calendar"] * {{ color: var(--text-primary) !important; background-color: var(--bg-surface); }}
+.stSelectbox [data-baseweb="select"] *, .stNumberInput input, .stTextInput input, .stTextArea textarea, .stDateInput input {{
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary);
+}}
+.stNumberInput button {{ background: var(--bg-elevated) !important; color: var(--text-primary) !important; }}
+::placeholder {{ color: var(--text-secondary) !important; opacity: 1; }}
+[data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"] {{ background: var(--bg-elevated) !important; }}
+[data-baseweb="input"] button {{ background: transparent !important; color: var(--text-primary) !important; }}
+[data-testid="stFormSubmitButton"] > button, [data-testid="stFormSubmitButton"] button {{
+    background: var(--red-bright) !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}}
+[data-testid="stFormSubmitButton"] button p {{ color: #FFFFFF !important; }}
+[data-baseweb="checkbox"] > span:first-of-type {{
+    background-color: var(--bg-elevated) !important;
+    border-color: var(--border-default) !important;
+}}
+[data-baseweb="checkbox"]:has(input:checked) > span:first-of-type {{
+    background-color: var(--red-bright) !important;
+    border-color: var(--red-bright) !important;
+}}
+
 #MainMenu {{ visibility: hidden; }}
 footer {{ visibility: hidden; }}
 .viewerBadge_container__1QSob {{ display: none; }}
@@ -457,9 +504,40 @@ def render_theme_toggle() -> None:
             st.session_state["theme"] = "light" if theme == "dark" else "dark"
             st.rerun()
 
+class Html(str):
+    """Markup produced by this module. Anything that is not Html is escaped before rendering."""
+
+
+def _h(markup: str) -> Html:
+    """Strip indentation and blank lines: Markdown ends an HTML block at a blank line and turns
+    4-space-indented lines that follow into a code block, which is how raw <div> text leaked onto pages."""
+    lines = (raw.strip() for raw in markup.splitlines())
+    return Html("\n".join(line for line in lines if line))
+
+
+# Badge/pill markup we generated. pandas 3 turns str subclasses into plain str, so cells are
+# recognised by exact content rather than by type. Bounded so it cannot grow without limit.
+_SAFE: set[str] = set()
+
+
+def _mark(markup: str) -> Html:
+    out = _h(markup)
+    if len(_SAFE) > 4096:
+        _SAFE.clear()
+    _SAFE.add(str(out))
+    return out
+
+
+def _e(value: object) -> str:
+    """Escape for HTML unless it is markup this module generated."""
+    if isinstance(value, Html) or (isinstance(value, str) and value in _SAFE):
+        return str(value)
+    return html.escape(str(value))
+
+
 def metric_card(label: str, value: str, delta: str = "",
                 delta_type: str = "neutral", icon: str = "",
-                variant: str = "default") -> str:
+                variant: str = "default") -> Html:
     delta_color = {"up": "#00D68F", "down": "#FF3D71", "neutral": "#8892AA"}[delta_type]
     delta_arrow = {"up": "↑", "down": "↓", "neutral": "→"}[delta_type]
 
@@ -475,33 +553,39 @@ def metric_card(label: str, value: str, delta: str = "",
         "success":  "0 0 20px rgba(0,214,143,0.2)",
         "ai":       "0 0 20px rgba(0,255,178,0.15)",
     }
-    return f"""
+    delta_html = f'<div class="metric-delta" style="color:{delta_color}">{delta_arrow} {_e(delta)}</div>' if delta else ""
+    return _h(f"""
     <div class="metric-card" style="border-color:{border_map[variant]};box-shadow:{glow_map[variant]}">
-        <div class="metric-icon">{icon}</div>
-        <div class="metric-label">{label}</div>
-        <div class="metric-value">{value}</div>
-        {"" if not delta else f'<div class="metric-delta" style="color:{delta_color}">{delta_arrow} {delta}</div>'}
-    </div>"""
+        <div class="metric-icon">{_e(icon)}</div>
+        <div class="metric-label">{_e(label)}</div>
+        <div class="metric-value">{_e(value)}</div>
+        {delta_html}
+    </div>""")
 
-def blood_badge(blood_group: str, units: int = None) -> str:
+
+def blood_badge(blood_group: str, units: int = None) -> Html:
     color = BLOOD_COLORS.get(blood_group, "#888")
     units_str = f" · {units}u" if units is not None else ""
-    return f"""<span class="blood-badge" style="background:{color}20;
+    return _mark(f"""<span class="blood-badge" style="background:{color}20;
                border:1px solid {color};color:{color}">
-               {blood_group}{units_str}</span>"""
+               {_e(blood_group)}{units_str}</span>""")
 
-def status_pill(status: str) -> str:
+
+def status_pill(status: str) -> Html:
     label, color, bg = STATUS_STYLES.get(status.upper(), (status.upper(), "#888", "rgba(136,136,136,0.1)"))
-    return f"""<span class="status-pill" style="background:{bg};border:1px solid {color};color:{color}">
-               {label}</span>"""
+    return _mark(f"""<span class="status-pill" style="background:{bg};border:1px solid {color};color:{color}">
+               {_e(label)}</span>""")
+
 
 def section_header(title: str, subtitle: str = "", icon: str = "") -> None:
-    st.markdown(f"""
+    sub = f'<div class="section-subtitle">{_e(subtitle)}</div>' if subtitle else ""
+    st.markdown(_h(f"""
     <div class="section-header">
-        <div class="section-title">{icon} {title}</div>
-        {"" if not subtitle else f'<div class="section-subtitle">{subtitle}</div>'}
+        <div class="section-title">{_e(icon)} {_e(title)}</div>
+        {sub}
         <div class="section-divider"></div>
-    </div>""", unsafe_allow_html=True)
+    </div>"""), unsafe_allow_html=True)
+
 
 def alert_banner(message: str, level: str = "info") -> None:
     configs = {
@@ -511,20 +595,25 @@ def alert_banner(message: str, level: str = "info") -> None:
         "success": ("OK",      "#00D68F", "rgba(0,214,143,0.1)"),
     }
     label, color, bg = configs.get(level, configs["info"])
-    st.markdown(f"""
+    st.markdown(_h(f"""
     <div class="alert-banner" style="background:{bg};border-left:3px solid {color}">
-        <span style="color:{color};font-weight:700;font-size:0.72rem">{label}</span> {message}
-    </div>""", unsafe_allow_html=True)
+        <span style="color:{color};font-weight:700;font-size:0.72rem">{label}</span> {_e(message)}
+    </div>"""), unsafe_allow_html=True)
+
 
 def styled_table(df) -> None:
-    styler = df.style.set_table_attributes('class="lifeline-table"')
-    st.markdown(styler.to_html(), unsafe_allow_html=True)
+    safe = df.astype(object).map(_e)
+    styler = safe.style.set_table_attributes('class="lifeline-table"')
+    if type(df.index).__name__ == "RangeIndex":
+        styler = styler.hide(axis="index")
+    st.markdown(_h(styler.to_html()), unsafe_allow_html=True)
 
-def inventory_bar(blood_group: str, current: int, capacity: int = 100) -> str:
+
+def inventory_bar(blood_group: str, current: int, capacity: int = 100) -> Html:
     pct = min(100, int((current / capacity) * 100))
     color = BLOOD_COLORS.get(blood_group, "#888")
     risk_color = "#FF3D71" if pct < 20 else "#FFB800" if pct < 40 else color
-    return f"""
+    return _h(f"""
     <div class="inv-bar-wrap">
         <div class="inv-bar-label">
             {blood_badge(blood_group)}
@@ -533,7 +622,8 @@ def inventory_bar(blood_group: str, current: int, capacity: int = 100) -> str:
         <div class="inv-bar-track">
             <div class="inv-bar-fill" style="width:{pct}%;background:{risk_color}"></div>
         </div>
-    </div>"""
+    </div>""")
+
 
 def get_matplotlib_style(theme: str = "dark") -> dict:
     is_dark = theme == "dark"
@@ -551,6 +641,16 @@ def get_matplotlib_style(theme: str = "dark") -> dict:
         "font.family":       "sans-serif",
         "font.size":         10,
     }
+
+def chart_template() -> str:
+    """Plotly template matching the active app theme."""
+    return "plotly_dark" if get_theme() == "dark" else "plotly_white"
+
+
+def chart_font() -> dict:
+    """Explicit Plotly font: Streamlit's frontend otherwise injects its own (dark-theme) text colour."""
+    return {"color": "#F0F4FF" if get_theme() == "dark" else "#0F172A", "family": "Inter, sans-serif"}
+
 
 def apply_chart_style(theme: str = "dark") -> None:
     import matplotlib as mpl

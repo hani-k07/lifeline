@@ -33,3 +33,6 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+# Claude Code local tooling
+.claude/
+_dev_*.py

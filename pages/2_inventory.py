@@ -11,7 +11,7 @@ st.set_page_config(page_title="Inventory — LIFELINE", layout="wide")
 
 from utils.styles import (
     inject_all_styles, get_theme, section_header, alert_banner,
-    blood_badge, status_pill, styled_table,
+    blood_badge, status_pill, styled_table, chart_template, chart_font,
 )
 from utils.sidebar import render_sidebar
 from utils.database import (
@@ -70,10 +70,10 @@ with tab1:
         df_sum = pd.DataFrame(list(summary.items()), columns=["Blood Group", "Units"]).sort_values("Units", ascending=False)
         fig = px.bar(df_sum, x="Blood Group", y="Units",
                      color="Units", color_continuous_scale=["#1a0533", "#ff416c"],
-                     template="plotly_dark", title=f"Stock at {sel_hosp_name}")
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                     template=chart_template(), title=f"Stock at {sel_hosp_name}")
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=chart_font(), plot_bgcolor="rgba(0,0,0,0)",
                           height=300, coloraxis_showscale=False, margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, theme=None)
 
         # Expiry warning
         today = datetime.today().date()
