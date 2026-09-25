@@ -36,3 +36,10 @@ build/
 # Claude Code local tooling
 .claude/
 _dev_*.py
+*.db-wal
+*.db-shm
+*.db-journal
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
