@@ -373,7 +373,8 @@ div[data-testid="stForm"] {{
 }}
 .login-wordmark {{
     font-family: 'Syne', sans-serif;
-    font-size: 3rem;
+    font-size: clamp(1.6rem, 7vw, 3rem);
+    white-space: nowrap;
     font-weight: 800;
     color: var(--text-primary);
     letter-spacing: 0.3em;

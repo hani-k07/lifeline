@@ -235,3 +235,24 @@ Thresholds need a **written clinical reference + sign-off** (I will not invent t
 | `python seed_data.py` / `python test_connection.py` | `KeyError: SUPABASE_URL` / 3 of 10 fail (`No module named utils.supabase_client`) |
 | `import antigravity` | `NameError: name 'n' is not defined` |
 | Git history scan for `sk-or-` / JWT-like keys, 5 revs | none |
+
+---
+
+## 10. Status after Phase 1 (security & foundation)
+
+Items 1–4 and 8 of §3, P0-1, and the UI issues you reported are fixed on `main` (see `git log`). Everything else in §5 is still open and scheduled per §8.
+
+| §3 item / finding | Status | Where |
+|---|---|---|
+| 1 key handling | **Done** except rotation (yours). `SecretStr`, no per-call `load_dotenv(override=True)`, never rendered | `lifeline/config.py`, `ai_engine.py` |
+| 2 bcrypt / plaintext | **Done.** bcrypt (cost 12), 8-char/72-byte policy; legacy SHA-256 hashes verify and upgrade on next login; demo hashes upgraded at first start; `seed_data.py` deleted | `lifeline/auth/passwords.py`, `service.py`, `bootstrap.py` |
+| 3 creds / timeout / throttle / per-page checks | **Done.** Demo table only if `APP_ENV=demo`; 30-min idle timeout; 5 failures → 15-min lock (also for unknown emails); guard on all 10 pages | `app.py`, `session.py`, `throttle.py`, `rbac.py` |
+| 4 PII | **Done.** CNIC masked; LLM payloads pseudonymised/allow-listed; verified by tests that capture the HTTP body | `lifeline/privacy.py`, `pages/9_ai_center.py` |
+| 8 requirements | **Done.** Upper bounds, bcrypt/pydantic(-settings) added, unused deps dropped, `requirements-dev.txt`. `folium`/`streamlit-folium` deferred to Phase 5 (emergency map) — nothing imports them yet | `requirements*.txt` |
+| P0-1 role vocabulary | **Done.** `Role` enum; migration 001 converts old DBs (with automatic `.bak-v0` copy) | `lifeline/auth/roles.py`, `lifeline/db/` |
+| §5-N15 audit gaps | Partly: LOGIN / LOGIN_FAILED / LOGIN_LOCKED / LOGOUT / SESSION_EXPIRED / ACCESS_DENIED are audited. PKT timestamps and before/after still open (Phase 2) | |
+| Reported UI bugs | **Done:** duplicate sidebar nav, leaked `<div class="section-divider">` text, invisible light-mode text/forms/charts, footer overlap, login wordmark wrap/empty box | `.streamlit/config.toml`, `utils/styles.py`, `utils/sidebar.py`, `app.py` |
+
+**Still open from this phase:** rotate the OpenRouter key; `setup_database.py`/legacy pages still use `utils/database.py` (moves to `lifeline/db/repositories` in Phase 2); `st.rerun()` swallowing success banners (§5-N6) and page-level HTML escaping of patient names (§5-N7) are Phase 5.
+
+**Quality gates now:** `pytest` 100 passed; `ruff` and `mypy` clean on `lifeline/` and `tests/`; coverage of `lifeline/` 97 % (`auth/` ≥ 96 % per module except `create_admin`/`session`, both covered). Legacy modules (`pages/`, `utils/`, engines) are not yet under lint/type checks.

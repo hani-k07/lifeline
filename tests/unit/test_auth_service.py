@@ -132,3 +132,52 @@ def test_session_logout_keeps_theme_and_sets_flash(db, monkeypatch):
     session.logout("bye", expired=True)
     assert fake == {"theme": "light", "_flash": "bye"}
     assert "SESSION_EXPIRED" in audit_actions(db)
+
+
+def test_session_login_populates_the_flat_keys_pages_read(db, monkeypatch):
+    fake: dict = {}
+    monkeypatch.setattr(session.st, "session_state", fake, raising=False)
+    user = service.authenticate("nurse@x.pk", PASSWORD, now=1).user
+    assert user is not None
+    current = session.login(user)
+    assert current.role is Role.STAFF and current.hospital_name == "Mayo" and not current.is_super
+    assert fake["logged_in"] is True and fake["user_role"] == "staff" and fake["user_hospital_id"] == 1
+    assert fake["last_active"] > 0 and session.current_user() == current
+    fake["user_role"] = "admin"                                   # retired name: no valid user any more
+    assert session.current_user() is None
+
+
+def test_session_login_for_global_user_has_no_hospital(db, monkeypatch):
+    fake: dict = {}
+    monkeypatch.setattr(session.st, "session_state", fake, raising=False)
+    current = session.login({"id": 9, "email": "a@x.pk", "name": "A", "role": "super_admin", "hospital_id": None})
+    assert current.is_super and current.hospital_id is None and "Global" in current.hospital_name
+
+
+def test_create_admin_cli(db, monkeypatch, capsys):
+    from lifeline.auth import create_admin
+
+    answers = iter(["root@x.pk", "Root"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    passwords_typed = iter([PASSWORD, PASSWORD])
+    monkeypatch.setattr(create_admin.getpass, "getpass", lambda _prompt="": next(passwords_typed))
+    assert create_admin.main() == 0
+    assert db.execute("SELECT role FROM users WHERE email='root@x.pk'").fetchone()[0] == "super_admin"
+
+
+def test_create_admin_cli_rejects_mismatch_and_missing_db(db, monkeypatch, capsys):
+    from lifeline.auth import create_admin
+
+    answers = iter(["root@x.pk", "Root"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    typed = iter([PASSWORD, "different-one"])
+    monkeypatch.setattr(create_admin.getpass, "getpass", lambda _prompt="": next(typed))
+    assert create_admin.main() == 1
+    assert "do not match" in capsys.readouterr().out
+
+
+def test_create_admin_cli_without_database(monkeypatch, capsys):
+    from lifeline.auth import create_admin
+
+    assert create_admin.main() == 1
+    assert "setup_database.py" in capsys.readouterr().out

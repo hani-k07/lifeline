@@ -43,10 +43,8 @@ with col:
     if flash:
         alert_banner(flash, "warning")
 
-    st.markdown('<div class="glass-hero">', unsafe_allow_html=True)
-
     with st.form("login_form", clear_on_submit=False):
-        st.markdown("<h4 style='color:white;'>Sign In</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:var(--text-primary);'>Sign In</h4>", unsafe_allow_html=True)
         email = st.text_input("Email address", placeholder="Email address", label_visibility="collapsed")
         password = st.text_input("Password", placeholder="Password", type="password", label_visibility="collapsed")
 
@@ -57,8 +55,6 @@ with col:
             if st.form_submit_button("Light" if theme == "dark" else "Dark", use_container_width=True):
                 st.session_state["theme"] = "light" if theme == "dark" else "dark"
                 st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
     if submitted:
         result = authenticate(email, password)
