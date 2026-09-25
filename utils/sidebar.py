@@ -3,6 +3,7 @@ import html
 
 import streamlit as st
 
+from lifeline.auth import session
 from lifeline.auth.roles import ADMIN_ROLES, ALL_ROLES, Role
 from lifeline.bootstrap import ensure_ready
 
@@ -50,7 +51,7 @@ def render_sidebar() -> None:
                 st.rerun()
         with col2:
             if st.button("Logout", use_container_width=True, key="sidebar_logout_btn"):
-                st.session_state.clear()
+                session.logout()
                 st.switch_page("app.py")
 
         st.markdown("""

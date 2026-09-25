@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import streamlit as st
 import pandas as pd
-import hashlib
 from datetime import datetime
 
 st.set_page_config(page_title="Admin — LIFELINE", layout="wide")
@@ -14,10 +13,11 @@ from utils.styles import (
     blood_badge, status_pill, styled_table, metric_card,
 )
 from lifeline.auth.roles import Role
+from lifeline.auth.service import create_user
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_all_users, get_audit_logs,
-    get_ai_logs, add_user, add_audit_log,
+    get_ai_logs,
 )
 
 if not st.session_state.get("logged_in"):
@@ -73,7 +73,6 @@ with tab1:
     section_header("Add New User")
 
     error_msg = None
-    success_msg = None
 
     with st.form("add_user_form"):
         col1, col2 = st.columns(2)
@@ -82,9 +81,9 @@ with tab1:
             new_name = st.text_input("Full Name *")
             new_role = st.selectbox("Role", [r.value for r in Role], format_func=lambda v: Role(v).label, index=2)
         with col2:
-            new_password = st.text_input("Password *", type="password", value="lifeline123")
+            new_password = st.text_input("Password * (min 8 characters)", type="password")
             hospitals = get_all_hospitals()
-            hosp_map = {"None (Global)": None}
+            hosp_map = {"None (Global — Super Admin only)": None}
             for h in hospitals:
                 hosp_map[h["name"]] = h["id"]
             sel_hosp = st.selectbox("Assign Hospital", list(hosp_map.keys()))
@@ -92,22 +91,14 @@ with tab1:
 
         submitted = st.form_submit_button("Create User", use_container_width=True)
         if submitted:
-            if not new_email or not new_name or not new_password:
-                error_msg = "Email, name and password are required."
-            else:
-                pw_hash = hashlib.sha256(new_password.encode()).hexdigest()
-                ok = add_user(new_email, pw_hash, new_role, new_name, new_hosp_id)
-                if ok:
-                    add_audit_log("USER_CREATED", f"Created user {new_email} with role {new_role}", _uid)
-                    success_msg = f"User {new_email} created successfully!"
-                else:
-                    error_msg = f"Failed — email {new_email} may already exist."
+            ok, message = create_user(new_email, new_name, new_password, new_role, new_hosp_id, _uid)
+            if ok:
+                st.toast(message)
+                st.rerun()
+            error_msg = message
 
-        if success_msg:
-            alert_banner(success_msg, "success")
-            st.rerun()
-        elif error_msg:
-            alert_banner(error_msg, "danger")
+    if error_msg:
+        alert_banner(error_msg, "danger")
 
 with tab2:
     hospitals = get_all_hospitals()

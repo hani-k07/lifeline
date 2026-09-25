@@ -1,11 +1,16 @@
 # app.py
 """LIFELINE v6.0 — Intelligent Blood Logistics Network (Pure Python / SQLite Edition)."""
 
+import html
+
 import streamlit as st
+
+from lifeline.auth import session
+from lifeline.auth.service import authenticate
 from lifeline.bootstrap import ensure_ready
-from utils.styles import inject_all_styles, get_theme, render_ecg, render_login_sidebar, alert_banner
-from utils.auth import validate_login
-from utils.database import get_hospital_by_id
+from lifeline.config import get_settings
+from lifeline.demo import DEMO_PASSWORD, DEMO_USERS
+from utils.styles import alert_banner, get_theme, inject_all_styles, render_ecg, render_login_sidebar
 
 st.set_page_config(
     page_title="LIFELINE — Blood Logistics",
@@ -15,8 +20,8 @@ st.set_page_config(
 
 ensure_ready()
 
-# Redirect if already logged in
-if st.session_state.get("logged_in"):
+# Already signed in with a live session: go straight to the dashboard.
+if session.current_user() is not None and not session.is_expired():
     st.switch_page("pages/1_dashboard.py")
     st.stop()
 
@@ -34,16 +39,17 @@ with col:
 
     render_ecg()
 
+    flash = st.session_state.pop("_flash", None)
+    if flash:
+        alert_banner(flash, "warning")
+
     st.markdown('<div class="glass-hero">', unsafe_allow_html=True)
-    
-    # We display login status if submitted
-    error_msg = None
-    
+
     with st.form("login_form", clear_on_submit=False):
         st.markdown("<h4 style='color:white;'>Sign In</h4>", unsafe_allow_html=True)
-        email = st.text_input("", placeholder="Email address", label_visibility="collapsed")
-        password = st.text_input("", placeholder="Password", type="password", label_visibility="collapsed")
-        
+        email = st.text_input("Email address", placeholder="Email address", label_visibility="collapsed")
+        password = st.text_input("Password", placeholder="Password", type="password", label_visibility="collapsed")
+
         col_btn, col_theme = st.columns([3, 1])
         with col_btn:
             submitted = st.form_submit_button("→ Access LIFELINE", use_container_width=True)
@@ -55,38 +61,24 @@ with col:
     st.markdown("</div>", unsafe_allow_html=True)
 
     if submitted:
-        if not email or not password:
-            error_msg = "Please fill in all fields."
-        else:
-            user = validate_login(email, password)
-            if user:
-                st.session_state["logged_in"] = True
-                st.session_state["user_id"] = int(user["id"])
-                st.session_state["user_email"] = user["email"]
-                st.session_state["user_name"] = user["name"]
-                st.session_state["user_role"] = user["role"]
-                st.session_state["user_hospital_id"] = user["hospital_id"]
-                if user["hospital_id"]:
-                    hosp = get_hospital_by_id(int(user["hospital_id"]))
-                    st.session_state["user_hospital_name"] = hosp["name"] if hosp else "Unknown"
-                else:
-                    st.session_state["user_hospital_name"] = "Global (All Hospitals)"
-                st.switch_page("pages/1_dashboard.py")
-                st.stop()
-            else:
-                error_msg = "Access Denied — Invalid credentials."
+        result = authenticate(email, password)
+        if result.ok and result.user is not None:
+            session.login(result.user)
+            st.switch_page("pages/1_dashboard.py")
+            st.stop()
+        alert_banner(result.error or "Access Denied — Invalid credentials.", "danger")
 
-    if error_msg:
-        alert_banner(error_msg, "danger")
-
-    st.markdown("""
-    <div style="margin-top:16px;opacity:0.6;font-size:0.72rem;text-align:center">
-    <table class="lifeline-table" style="font-size:0.68rem">
-    <tr><th>EMAIL</th><th>ROLE</th><th>HOSPITAL</th></tr>
-    <tr><td>admin@lifeline.com</td><td>Super Admin</td><td>Global</td></tr>
-    <tr><td>mayo@lifeline.com</td><td>Hospital Admin</td><td>Mayo Hospital</td></tr>
-    <tr><td>mayo.worker@lifeline.com</td><td>Staff</td><td>Mayo Hospital</td></tr>
-    </table>
-    <p style='color:#8892AA;font-size:0.65rem;text-align:center;margin-top:8px;'>
-    All accounts: password <code>lifeline123</code></p>
-    </div>""", unsafe_allow_html=True)
+    if get_settings().app_env == "demo":
+        rows = "".join(
+            f"<tr><td>{html.escape(u.email)}</td><td>{html.escape(u.role.label)}</td>"
+            f"<td>{html.escape(u.hospital)}</td></tr>"
+            for u in DEMO_USERS
+        )
+        st.markdown(
+            f"""<div style="margin-top:16px;opacity:0.85;font-size:0.72rem;text-align:center">
+<table class="lifeline-table" style="font-size:0.68rem">
+<tr><th>EMAIL</th><th>ROLE</th><th>HOSPITAL</th></tr>{rows}</table>
+<p style="color:var(--text-secondary);font-size:0.65rem;text-align:center;margin-top:8px;">
+Demo mode — all accounts use password <code>{html.escape(DEMO_PASSWORD)}</code></p></div>""",
+            unsafe_allow_html=True,
+        )

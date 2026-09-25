@@ -367,8 +367,15 @@ def add_user(email: str, password_hash: str, role: str, name: str,
             )
             conn.commit()
             return True
-        except sqlite3.IntegrityError:
-            return False
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE" in str(exc):
+                return False        # duplicate email; anything else (bad role/hospital) is a real error
+            raise
+
+
+def update_password_hash(user_id: int, password_hash: str) -> None:
+    with _conn() as conn:
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
 
 
 def get_dashboard_stats(hospital_id: int | None = None) -> dict:

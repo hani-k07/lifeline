@@ -8,20 +8,16 @@ LIFELINE v6.0 — Database Setup & Seeding
 from __future__ import annotations
 import argparse
 import sqlite3
-import hashlib
 from datetime import datetime, timedelta
 import random
 
-from lifeline.auth.roles import Role
+from lifeline.auth.passwords import hash_password
 from lifeline.config import get_settings
 from lifeline.db.migrate import LATEST_VERSION, apply_migrations
+from lifeline.demo import DEMO_PASSWORD, DEMO_USERS
 
 DB_PATH = get_settings().db_path
 BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
-
-
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -202,20 +198,11 @@ def seed_hospitals(conn: sqlite3.Connection) -> None:
 
 
 def seed_users(conn: sqlite3.Connection) -> None:
+    """Demo accounts (one shared, documented password, each with its own salted bcrypt hash)."""
     now = datetime.now().isoformat(timespec="seconds")
-    pw = hash_password("lifeline123")
     users = [
-        ("admin@lifeline.com",            pw, Role.SUPER_ADMIN.value, "Dr. Zara Ahmed (Admin)",          now, None),
-        ("mayo@lifeline.com",             pw, Role.HOSPITAL_ADMIN.value, "Dr. Kamran Sheikh (Mayo)",         now, 1),
-        ("services@lifeline.com",         pw, Role.HOSPITAL_ADMIN.value, "Dr. Amna Malik (Services)",        now, 2),
-        ("jinnah@lifeline.com",           pw, Role.HOSPITAL_ADMIN.value, "Dr. Bilal Hassan (Jinnah)",        now, 3),
-        ("shaukat@lifeline.com",          pw, Role.HOSPITAL_ADMIN.value, "Dr. Sara Yousaf (Shaukat)",        now, 4),
-        ("mayo.worker@lifeline.com",      pw, Role.STAFF.value, "Nurse Hira Baig (Mayo)",           now, 1),
-        ("mayo.worker2@lifeline.com",     pw, Role.STAFF.value, "Technician Saad Ali (Mayo)",       now, 1),
-        ("services.worker@lifeline.com",  pw, Role.STAFF.value, "Nurse Rabia Naz (Services)",       now, 2),
-        ("jinnah.worker@lifeline.com",    pw, Role.STAFF.value, "Technician Umar Farooq (Jinnah)",  now, 3),
-        ("shaukat.worker@lifeline.com",   pw, Role.STAFF.value, "Nurse Fatima Zia (Shaukat)",       now, 4),
-        ("shaukat.worker2@lifeline.com",  pw, Role.STAFF.value, "Technician Ali Hamza (Shaukat)",   now, 4),
+        (u.email, hash_password(DEMO_PASSWORD), u.role.value, u.name, now, u.hospital_id)
+        for u in DEMO_USERS
     ]
     conn.executemany(
         "INSERT OR IGNORE INTO users (email,password_hash,role,name,created_at,hospital_id) VALUES (?,?,?,?,?,?)",
@@ -318,6 +305,12 @@ def main() -> None:
     create_schema(conn)
     print("   -> Seeding hospitals...")
     seed_hospitals(conn)
+    if get_settings().app_env == "prod":
+        conn.close()
+        print()
+        print("[!] APP_ENV=prod: demo users and sample data were NOT seeded.")
+        print("    Create the first super admin with: python -m lifeline.auth.create_admin")
+        return
     print("   -> Seeding users (11 accounts)...")
     seed_users(conn)
     print("   -> Seeding blood inventory...")
