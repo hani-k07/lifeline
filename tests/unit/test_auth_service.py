@@ -2,10 +2,10 @@ import sqlite3
 
 import pytest
 
-import setup_database
 from lifeline.auth import passwords, service, session, throttle
 from lifeline.auth.roles import Role
 from lifeline.config import get_settings
+from lifeline.db.schema import create_schema
 from lifeline.demo import DEMO_PASSWORD
 
 PASSWORD = "correct horse"
@@ -14,7 +14,7 @@ PASSWORD = "correct horse"
 @pytest.fixture
 def db():
     conn = sqlite3.connect(get_settings().db_path)
-    setup_database.create_schema(conn)
+    create_schema(conn)
     conn.execute("INSERT INTO hospitals (id, name, city) VALUES (1, 'Mayo', 'Lahore')")
     conn.execute(
         "INSERT INTO users (email, password_hash, role, name, created_at, hospital_id) VALUES (?,?,?,?,?,?)",

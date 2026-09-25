@@ -15,13 +15,12 @@ from utils.styles import (
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_exchanges, add_exchange,
-    get_blood_units, add_audit_log,
-)
+from lifeline.services.exchanges import cancel_exchange, complete_exchange, request_exchange, respond_exchange
+from utils.actions import attempt
+from utils.database import get_all_hospitals, get_blood_units, get_exchanges
 from dsa_engine import build_hospital_graph, BLOOD_GROUPS
 
-require_page(__file__)
+user = require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
@@ -101,12 +100,13 @@ with tab1:
                     st.caption(f"Route: {' -> '.join(path_names)}")
 
                 if st.button(f"Request Exchange from {r['hospital_name']}", key=f"req_{r['hospital_id']}"):
-                    ok = add_exchange(r["hospital_id"], src["id"], bg, min(needed, r["units_available"]))
+                    ok, ex_error, _ = attempt(request_exchange, user, r["hospital_id"], src["id"], bg,
+                                              min(int(needed), r["units_available"]))
                     if ok:
-                        add_audit_log("EXCHANGE_REQUEST", f"Exchange request: {bg} from {r['hospital_name']} to {src['name']}", _uid)
-                        alert_banner(f"Exchange request sent to {r['hospital_name']}", "success")
+                        st.toast(f"Exchange request sent to {r['hospital_name']}")
                         del st.session_state["exchange_results"]
                         st.rerun()
+                    alert_banner(ex_error or "Could not send the request.", "danger")
                 st.divider()
 
 with tab2:
@@ -114,16 +114,44 @@ with tab2:
     if not exchanges:
         alert_banner("No exchange transactions recorded yet.", "info")
     else:
-        history_rows = []
-        for ex in exchanges:
-            history_rows.append({
-                "From": ex.get("from_name", "—"),
-                "To": ex.get("to_name", "—"),
-                "Blood Group": blood_badge(ex.get("blood_group", "?")),
-                "Units": ex.get("units", 0),
-                "Status": status_pill(ex.get("status", "PENDING")),
-                "Created": ex.get("created_at", "")[:16].replace("T", " ") if ex.get("created_at") else "—"
-            })
-        df_show = pd.DataFrame(history_rows)
-        styled_table(df_show)
+        styled_table(pd.DataFrame([{
+            "#": ex["id"],
+            "From (supplier)": ex.get("from_name", "—"),
+            "To (requester)": ex.get("to_name", "—"),
+            "Blood Group": blood_badge(ex.get("blood_group", "?")),
+            "Units": ex.get("units", 0),
+            "Status": status_pill(ex.get("status", "PENDING")),
+            "Created": ex.get("created_at", "")[:16].replace("T", " ") if ex.get("created_at") else "—",
+        } for ex in exchanges]))
 
+        open_ex = [ex for ex in exchanges if ex["status"] in ("PENDING", "ACCEPTED")]
+        if open_ex:
+            section_header("Open exchanges", "Suppliers accept or reject; either side completes once units are handed over")
+            action_error = None
+            for ex in open_ex:
+                label = f"#{ex['id']} · {ex['units']}u {ex['blood_group']} · {ex['from_name']} → {ex['to_name']}"
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.markdown(f"{label} {status_pill(ex['status'])}", unsafe_allow_html=True)
+                is_supplier = _role == Role.SUPER_ADMIN or ex["from_hospital_id"] == _hosp_id
+                if ex["status"] == "PENDING" and is_supplier:
+                    if c2.button("Accept", key=f"acc_{ex['id']}"):
+                        ok, action_error, _ = attempt(respond_exchange, user, ex["id"], True)
+                        if ok:
+                            st.toast("Exchange accepted; units reserved")
+                            st.rerun()
+                    if c3.button("Reject", key=f"rej_{ex['id']}"):
+                        ok, action_error, _ = attempt(respond_exchange, user, ex["id"], False)
+                        if ok:
+                            st.rerun()
+                if ex["status"] == "ACCEPTED":
+                    if c2.button("Complete", key=f"done_{ex['id']}"):
+                        ok, action_error, _ = attempt(complete_exchange, user, ex["id"])
+                        if ok:
+                            st.toast("Exchange completed; units transferred")
+                            st.rerun()
+                    if c3.button("Cancel", key=f"xcl_{ex['id']}"):
+                        ok, action_error, _ = attempt(cancel_exchange, user, ex["id"])
+                        if ok:
+                            st.rerun()
+            if action_error:
+                alert_banner(action_error, "danger")

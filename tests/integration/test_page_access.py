@@ -6,7 +6,6 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-import setup_database
 from lifeline.config import get_settings
 
 PAGES = ["1_dashboard", "2_inventory", "3_emergency", "4_exchange", "5_screening",
@@ -19,18 +18,11 @@ ALLOWED = {
 
 
 @pytest.fixture(autouse=True)
-def switches(monkeypatch):
+def switches(monkeypatch, demo_db):
     """AppTest has no multipage context: stub page_link and record switch_page targets instead."""
     targets: list[str] = []
     monkeypatch.setattr(st, "page_link", lambda *a, **k: None)
     monkeypatch.setattr(st, "switch_page", lambda page, *a, **k: targets.append(page))
-    conn = sqlite3.connect(get_settings().db_path)
-    setup_database.create_schema(conn)
-    setup_database.seed_hospitals(conn)
-    setup_database.seed_users(conn)
-    setup_database.seed_blood_inventory(conn)
-    conn.commit()
-    conn.close()
     return targets
 
 

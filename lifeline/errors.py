@@ -14,6 +14,10 @@ class NotFound(DomainError):
     pass
 
 
+class NotAuthorized(DomainError):
+    """The actor may not act on this hospital's data."""
+
+
 class InsufficientStock(DomainError):
     def __init__(self, blood_group: str, wanted: int, available: int):
         super().__init__(f"Only {available} unit(s) of {blood_group} available; {wanted} needed.")

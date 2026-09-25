@@ -9,6 +9,11 @@ BLOOD_GROUPS: tuple[str, ...] = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-
 LOW_UNITS = 8
 CRITICAL_UNITS = 3
 MAX_UNITS_PER_RECEIPT = 500
+# Whole-hospital stock status (hospitals.stock_status).
+HOSPITAL_CRITICAL_TOTAL = 20
+HOSPITAL_LOW_TOTAL = 60
+# Groups emergency care depends on (common ones + the universal donor). Scarcity of rare groups only makes a hospital 'low'.
+KEY_GROUPS = ("A+", "B+", "O+", "O-")
 
 
 class UnitStatus(str, Enum):

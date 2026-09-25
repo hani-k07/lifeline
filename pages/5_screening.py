@@ -15,13 +15,12 @@ from lifeline.auth.rbac import require_page
 from lifeline.privacy import mask_cnic
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_donors, add_donor,
-    get_screening_tests, add_screening_test, add_audit_log,
-)
+from lifeline.services.donors import record_screening, register_donor
+from utils.actions import attempt
+from utils.database import get_all_hospitals, get_donors, get_screening_tests
 from dsa_engine import BLOOD_GROUPS
 
-require_page(__file__)
+user = require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
@@ -87,8 +86,7 @@ with tab2:
     section_header("Register New Donor")
     
     error_msg = None
-    success_msg = None
-    
+
     with st.form("donor_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -97,30 +95,18 @@ with tab2:
             d_phone = st.text_input("Phone", placeholder="0300-XXXXXXX")
         with col2:
             d_bg = st.selectbox("Blood Group *", BLOOD_GROUPS)
+            d_age = st.number_input("Age", min_value=16, max_value=100, value=30)
             d_last = st.date_input("Last Donation Date (if any)", value=None)
             d_notes = st.text_area("Medical Notes", placeholder="Any conditions, medications...")
 
-        submitted = st.form_submit_button("Register Donor", use_container_width=True)
-        if submitted:
-            if not d_name:
-                error_msg = "Donor name is required."
-            else:
-                ok = add_donor(
-                    name=d_name, cnic=d_cnic, phone=d_phone,
-                    blood_group=d_bg, hospital_id=sel_hosp_id,
-                    last_donated=str(d_last) if d_last else None,
-                    notes=d_notes
-                )
-                if ok:
-                    add_audit_log("DONOR_REGISTERED", f"New donor {d_name} ({d_bg}) registered at {sel_name}", _uid)
-                    success_msg = f"Donor {d_name} registered successfully!"
-                else:
-                    error_msg = "Failed to register donor."
+        if st.form_submit_button("Register Donor", use_container_width=True):
+            ok, error_msg, _ = attempt(register_donor, user, sel_hosp_id, d_name, d_bg, cnic=d_cnic, phone=d_phone,
+                                       age=int(d_age), last_donated=d_last, notes=d_notes)
+            if ok:
+                st.toast(f"Donor {d_name} registered")
+                st.rerun()
 
-    if success_msg:
-        alert_banner(success_msg, "success")
-        st.rerun()
-    elif error_msg:
+    if error_msg:
         alert_banner(error_msg, "danger")
 
 with tab3:
@@ -161,8 +147,11 @@ with tab3:
             screen_result = screen_donor({"donor": donor_data})
             risk_result = risk_score({"donor": {**donor_data, "last_donation_days": 365}})
 
-            ok = add_screening_test(sel_donor_id, sel_hosp_id, hiv, hep_b, hep_c, syphilis, malaria)
-            add_audit_log("SCREENING", f"Screening for donor ID {sel_donor_id}: {screen_result['decision']}", _uid)
+            ok, save_error, _ = attempt(record_screening, user, sel_donor_id, sel_hosp_id, hiv=hiv, hepatitis_b=hep_b,
+                                        hepatitis_c=hep_c, syphilis=syphilis, malaria=malaria,
+                                        decision=screen_result["decision"], risk_score=int(risk_result["score"]))
+            if not ok:
+                alert_banner(save_error or "Could not save the screening.", "danger")
 
             decision = screen_result["decision"]
             dec_level = {"SAFE": "success", "DEFER": "warning", "BLOCK": "danger"}.get(decision, "info")

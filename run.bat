@@ -15,7 +15,7 @@ pip install -r requirements.txt --quiet
 
 echo.
 echo [2/3] Preparing database (creates it on first run, migrates it afterwards)...
-python setup_database.py
+python -m scripts.setup_db
 
 echo.
 echo [3/3] Starting LIFELINE...

@@ -7,7 +7,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime
-import random
 
 st.set_page_config(page_title="Analytics — LIFELINE", layout="wide")
 
@@ -20,7 +19,7 @@ from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_blood_units, get_donors,
-    get_transfusions, get_blood_requests, get_blood_summary,
+    get_transfusions, get_blood_requests, get_blood_summary, get_daily_usage,
 )
 from dsa_engine import BLOOD_GROUPS, forecast_demand, detect_shortage_risk, build_hospital_graph
 
@@ -109,9 +108,10 @@ with tab2:
         fg_hosp = sel_hosp_id if sel_hosp_id else (get_all_hospitals()[0]["id"] if get_all_hospitals() else None)
 
     if fg_hosp:
-        # Mock historical data (seeded deterministically)
-        random.seed((fg_hosp or 0) + (ord(fg_bg[0]) if fg_bg else 0))
-        historical = [round(random.uniform(1.5, 8.0), 1) for _ in range(14)]
+        # Real usage: units issued or transfused per day, from the inventory event ledger.
+        historical = get_daily_usage(fg_hosp, fg_bg, 14)
+        if not any(historical):
+            alert_banner("No usage recorded for this group in the last 14 days; the forecast below is flat.", "info")
         current_stock_list = get_blood_units(fg_hosp)
         current_stock = sum(u["units"] for u in current_stock_list if u["blood_group"] == fg_bg)
 

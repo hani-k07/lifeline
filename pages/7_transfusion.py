@@ -15,13 +15,12 @@ from utils.styles import (
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_transfusions, add_transfusion,
-    get_donors, add_audit_log, update_blood_units,
-)
+from lifeline.services.transfusion import record_transfusion
+from utils.actions import attempt
+from utils.database import get_all_hospitals, get_transfusions
 from dsa_engine import BLOOD_GROUPS, get_compatible_donors
 
-require_page(__file__)
+user = require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
@@ -94,7 +93,6 @@ with tab2:
     </div>""", unsafe_allow_html=True)
 
     error_msg = None
-    success_msg = None
 
     with st.form("transfusion_form"):
         col1, col2, col3 = st.columns(3)
@@ -109,24 +107,16 @@ with tab2:
         performed_by = st.text_input("Performed By (Physician / Nurse)")
         notes = st.text_area("Clinical Notes", placeholder="Indications, observations, reaction notes...")
 
-        submitted = st.form_submit_button("Record Transfusion", use_container_width=True)
-        if submitted:
-            if not patient_name:
-                error_msg = "Patient name is required."
-            elif blood_grp not in compatible:
-                error_msg = f"Incompatibility Warning: {blood_grp} is NOT compatible with patient blood group {check_bg}!"
-            else:
-                ok = add_transfusion(sel_hosp_id, patient_name, blood_grp, units, performed_by, notes)
-                if ok:
-                    update_blood_units(sel_hosp_id, blood_grp, -units, f"Transfusion: {patient_name}", _uid)
-                    add_audit_log("TRANSFUSION", f"Transfused {units}u {blood_grp} to {patient_name} at {sel_name}", _uid)
-                    success_msg = f"Transfusion recorded for {patient_name}"
+        if st.form_submit_button("Record Transfusion", use_container_width=True):
+            # Compatibility and stock are enforced by the service, before anything is written.
+            ok, error_msg, _ = attempt(record_transfusion, user, sel_hosp_id, patient_name, check_bg, blood_grp, int(units),
+                                       performed_by, notes)
+            if ok:
+                st.toast(f"Transfusion recorded for {patient_name}")
+                st.rerun()
 
-        if success_msg:
-            alert_banner(success_msg, "success")
-            st.rerun()
-        elif error_msg:
-            alert_banner(error_msg, "danger")
+    if error_msg:
+        alert_banner(error_msg, "danger")
 
 with tab3:
     section_header("Transfusion Reaction Monitor", "Model-Based Reflex Agent")

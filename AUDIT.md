@@ -256,3 +256,26 @@ Items 1–4 and 8 of §3, P0-1, and the UI issues you reported are fixed on `mai
 **Still open from this phase:** rotate the OpenRouter key; `setup_database.py`/legacy pages still use `utils/database.py` (moves to `lifeline/db/repositories` in Phase 2); `st.rerun()` swallowing success banners (§5-N6) and page-level HTML escaping of patient names (§5-N7) are Phase 5.
 
 **Quality gates now:** `pytest` 100 passed; `ruff` and `mypy` clean on `lifeline/` and `tests/`; coverage of `lifeline/` 97 % (`auth/` ≥ 96 % per module except `create_admin`/`session`, both covered). Legacy modules (`pages/`, `utils/`, engines) are not yet under lint/type checks.
+
+---
+
+## 11. Status after Phase 2 (data layer)
+
+| Finding | Status | Where |
+|---|---|---|
+| P0-4 expired stock counted as available | **Fixed.** Stock = `available` units with `expiry_date >= today`; housekeeping marks expired units and logs events | `units.py`, `housekeeping.py` |
+| P0-5 silent over-consumption, no unit identity | **Fixed.** One row per unit; all-or-nothing FEFO issue (`InsufficientStock`); status changes are guarded UPDATEs inside `BEGIN IMMEDIATE`, so a unit cannot be issued twice (tested with 6 concurrent threads) | `lifeline/services/`, `db/connection.py` |
+| State machine | **Done** in Python and as a DB trigger; a test checks all 36 (from, to) pairs agree | `constants.py`, `schema.sql` |
+| N13 constraints/indexes/WAL | **Done.** CHECKs (groups, statuses, units > 0, coordinates, distinct hospitals), FKs, 24 indexes, unit blood group and expiry immutable, audit log append-only | `schema.sql` |
+| N15 audit | **Done.** actor, action, entity, before/after JSON, PKT (`+05:00`) timestamps, written in the same transaction as the change | `repositories/audit.py` |
+| N8 random forecast input | **Fixed.** Forecasts use real usage from `inventory_events`; the seed contains 30 days of history | `events.daily_usage` |
+| N9 exchange never completes / request never reserves / contracts = vendor model | **Fixed.** request -> reserve -> dispatch/cancel; exchange request -> accept -> complete; lend/borrow contracts with deadlines and automatic BREACHED | `services/emergency.py`, `exchanges.py`, `contracts.py` |
+| #7 IDs / seed | **Done.** One INTEGER-id schema; deterministic `random.Random(42)` seed (10 hospitals, 72 donors, ~460 available units, ~2,900 events, 644 transfusions, emergencies, exchanges, loans) | `scripts/seed_demo.py` |
+
+**Migration 002** converts existing databases (aggregated counts become individual units; vendor contracts are kept as `vendor_contracts_legacy`; deltas become events; rows that cannot satisfy the new constraints go to `migration_rejects`, never dropped). A test asserts fresh and migrated schemas have identical shape. The first migration of a database writes `<db>.bak-v<N>` first.
+
+**Known consequences:** a database whose stock had already passed its expiry date migrates to expired units (the checked-in demo DB from June is now all expired) - run `python -m scripts.setup_db --reset` for fresh demo data. Hospital coordinates in the seed are approximate (+-500 m) and the ABO/Rh group mix is an approximation of published Pakistani surveys; both are flagged in the seed file.
+
+**Still open:** caching (`st.cache_data`) and structured logging (Phase 6); `utils/database.py` is a read-only transitional shim until the pages are rebuilt (Phase 5); routing still matches exact groups only and the graph is still a full mesh (Phase 3); screening/reaction rules unchanged (Phase 3).
+
+**Quality gates:** `pytest` 313 passed; `ruff` + `mypy` clean on `lifeline/`, `tests/`, `scripts/`; coverage of `lifeline/` 96 %.

@@ -2,26 +2,32 @@
 """Emergency Blood Requests — LIFELINE v6.0"""
 from __future__ import annotations
 
-import streamlit as st
+import html
+
 import pandas as pd
-from datetime import datetime
+import streamlit as st
 
 st.set_page_config(page_title="Emergency — LIFELINE", layout="wide")
 
-from utils.styles import (
-    inject_all_styles, get_theme, section_header, alert_banner,
-    blood_badge, status_pill, styled_table,
-)
+from dsa_engine import BLOOD_GROUPS, TriageQueue, build_hospital_graph
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
+from lifeline.services.emergency import cancel_request, create_request, fulfil_request, reserve_units
+from utils.actions import attempt
+from utils.database import get_all_hospitals, get_blood_requests, get_reserved_counts
+from utils.database import get_blood_units as get_bu
 from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_blood_requests, add_blood_request,
-    resolve_blood_request, get_blood_summary, add_audit_log,
+from utils.styles import (
+    alert_banner,
+    blood_badge,
+    get_theme,
+    inject_all_styles,
+    section_header,
+    status_pill,
+    styled_table,
 )
-from dsa_engine import TriageQueue, build_hospital_graph, BLOOD_GROUPS
 
-require_page(__file__)
+user = require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
@@ -41,66 +47,74 @@ st.markdown("""
 </div>""", unsafe_allow_html=True)
 
 tab1, tab2, tab3 = st.tabs(["Active Queue", "New Request", "Find Blood"])
+_scope = None if _role == Role.SUPER_ADMIN else _hosp_id
+_can_manage = _role in (Role.SUPER_ADMIN, Role.HOSPITAL_ADMIN)
 
 # ── Tab 1: Queue ──
 with tab1:
-    requests = get_blood_requests(_hosp_id if _role != Role.SUPER_ADMIN else None)
-    pending = [r for r in requests if r.get("status") == "PENDING"]
-    resolved = [r for r in requests if r.get("status") == "RESOLVED"]
+    requests = get_blood_requests(_scope)
+    active = [r for r in requests if r.get("status") in ("PENDING", "RESERVED")]
+    closed = [r for r in requests if r.get("status") in ("RESOLVED", "CANCELLED")]
+    reserved_counts = get_reserved_counts()
 
-    # Build triage queue
     tq = TriageQueue()
     priority_map = {"CRITICAL": 1, "URGENT": 2, "ROUTINE": 3}
-    for r in pending:
-        p = priority_map.get(r.get("urgency", "ROUTINE"), 3)
-        tq.push(p, r)
+    for r in active:
+        tq.push(priority_map.get(r.get("urgency", "ROUTINE"), 3), r)
 
-    section_header(f"Active Queue", f"{len(pending)} pending requests")
+    section_header("Active Queue", f"{len(active)} open requests")
+    queue_error = None
 
-    if not pending:
-        alert_banner("No pending emergency requests in the queue.", "success")
+    if not active:
+        alert_banner("No open emergency requests in the queue.", "success")
     else:
         for req in tq.all_sorted():
+            rid, need = req["id"], req["units_needed"]
+            have = reserved_counts.get(rid, 0)
             with st.container():
-                c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1.5, 1])
-                ug = req.get("urgency", "ROUTINE")
-                bg = req.get("blood_group", "?")
-                pt = req.get("patient_name", "Unknown")
+                c1, c2, c3, c4, c5 = st.columns([2, 1, 1.2, 1.5, 1.4])
+                pt = html.escape(str(req.get("patient_name") or "Unknown"))
+                cond = html.escape(str(req.get("patient_condition") or "N/A"))
                 ts = str(req.get("created_at", ""))[:16].replace("T", " ")
-                hosp = req.get("hospital_name", "—")
-                
-                c1.markdown(f"<div style='font-size:0.9rem;font-weight:600;color:var(--text-primary)'>{pt}</div><div style='font-size:0.75rem;color:var(--text-secondary)'>{req.get('patient_condition','N/A')}</div>", unsafe_allow_html=True)
-                c2.markdown(status_pill(ug), unsafe_allow_html=True)
-                c3.markdown(f"{blood_badge(bg)} <span style='font-family:\"JetBrains Mono\",monospace;font-size:0.85rem'>× {req.get('units_needed','?')}u</span>", unsafe_allow_html=True)
-                c4.markdown(f"<div style='font-size:0.75rem;color:var(--text-secondary)'>{hosp}</div><div style='font-size:0.68rem;color:var(--text-muted)'>{ts}</div>", unsafe_allow_html=True)
-                
-                if _role in (Role.SUPER_ADMIN, Role.HOSPITAL_ADMIN):
-                    if c5.button("Resolve", key=f"res_{req['id']}"):
-                        resolve_blood_request(req["id"])
-                        add_audit_log("EMERGENCY_RESOLVED", f"Resolved request for {pt} — {bg}", _uid)
-                        st.rerun()
+                c1.markdown(f"<div style='font-size:0.9rem;font-weight:600;color:var(--text-primary)'>{pt}</div>"
+                            f"<div style='font-size:0.75rem;color:var(--text-secondary)'>{cond}</div>", unsafe_allow_html=True)
+                c2.markdown(status_pill(req.get("urgency", "ROUTINE")) + " " + status_pill(req["status"]), unsafe_allow_html=True)
+                c3.markdown(f"{blood_badge(req['blood_group'])} <span style='font-family:monospace;font-size:0.85rem'>"
+                            f"{have}/{need}u reserved</span>", unsafe_allow_html=True)
+                c4.markdown(f"<div style='font-size:0.75rem;color:var(--text-secondary)'>{html.escape(req.get('hospital_name', '—'))}"
+                            f"</div><div style='font-size:0.68rem;color:var(--text-secondary)'>{ts}</div>", unsafe_allow_html=True)
+                if _can_manage:
+                    with c5:
+                        if req["status"] == "RESERVED" and have == need and st.button("Dispatch", key=f"disp_{rid}"):
+                            ok, queue_error, _ = attempt(fulfil_request, user, rid)
+                            if ok:
+                                st.toast(f"Request {rid} dispatched")
+                                st.rerun()
+                        if st.button("Cancel", key=f"cancel_{rid}"):
+                            ok, queue_error, _ = attempt(cancel_request, user, rid, "cancelled from queue")
+                            if ok:
+                                st.toast(f"Request {rid} cancelled; reserved units returned to stock")
+                                st.rerun()
                 st.divider()
+    if queue_error:
+        alert_banner(queue_error, "danger")
 
-    if resolved:
-        with st.expander(f"Resolved Requests ({len(resolved)})"):
-            resolved_rows = []
-            for r in resolved:
-                resolved_rows.append({
-                    "Patient": r["patient_name"],
-                    "Blood Group": blood_badge(r["blood_group"]),
-                    "Units": r["units_needed"],
-                    "Urgency": status_pill(r["urgency"]),
-                    "Requested": r["created_at"][:16].replace("T", " ") if r.get("created_at") else "—",
-                    "Resolved": r["resolved_at"][:16].replace("T", " ") if r.get("resolved_at") else "—"
-                })
-            styled_table(pd.DataFrame(resolved_rows))
+    if closed:
+        with st.expander(f"Closed Requests ({len(closed)})"):
+            styled_table(pd.DataFrame([{
+                "Patient": r["patient_name"],
+                "Blood Group": blood_badge(r["blood_group"]),
+                "Units": r["units_needed"],
+                "Urgency": status_pill(r["urgency"]),
+                "Status": status_pill(r["status"]),
+                "Requested": r["created_at"][:16].replace("T", " ") if r.get("created_at") else "—",
+                "Closed": r["resolved_at"][:16].replace("T", " ") if r.get("resolved_at") else "—",
+            } for r in closed]))
 
 # ── Tab 2: New Request ──
 with tab2:
     section_header("Submit Emergency Blood Request")
-    
-    error_msg = None
-    success_msg = None
+    new_error = None
 
     with st.form("emergency_form"):
         col1, col2, col3 = st.columns(3)
@@ -115,32 +129,20 @@ with tab2:
         condition = st.text_area("Patient Condition / Notes", placeholder="e.g. Trauma surgery, O- required")
 
         if _role == Role.SUPER_ADMIN:
-            hospitals = get_all_hospitals()
-            hosp_map = {h["name"]: h["id"] for h in hospitals}
-            sel_h = st.selectbox("Requesting Hospital", list(hosp_map.keys()))
-            req_hosp_id = hosp_map[sel_h]
+            hosp_map = {h["name"]: h["id"] for h in get_all_hospitals()}
+            req_hosp_id = hosp_map[st.selectbox("Requesting Hospital", list(hosp_map.keys()))]
         else:
             req_hosp_id = _hosp_id
 
-        submitted = st.form_submit_button("Submit Emergency Request", use_container_width=True)
-        if submitted:
-            if not patient_name:
-                error_msg = "Patient name is required."
-            else:
-                ok = add_blood_request(req_hosp_id, bg, units, urgency, patient_name, condition)
-                if ok:
-                    add_audit_log("EMERGENCY_REQUEST", f"Emergency {urgency} request for {units}u {bg} — {patient_name}", _uid)
-                    success_msg = f"{urgency} request submitted for {units} units of {bg}"
-                else:
-                    error_msg = "Failed to submit emergency request."
+        if st.form_submit_button("Submit Emergency Request", use_container_width=True):
+            ok, new_error, _ = attempt(create_request, user, req_hosp_id, bg, int(units), urgency, patient_name, condition)
+            if ok:
+                st.toast(f"{urgency} request submitted for {units} unit(s) of {bg}")
+                st.rerun()
+    if new_error:
+        alert_banner(new_error, "danger")
 
-    if success_msg:
-        alert_banner(success_msg, "success")
-        st.rerun()
-    elif error_msg:
-        alert_banner(error_msg, "danger")
-
-# ── Tab 3: Find Blood (Dijkstra) ──
+# ── Tab 3: Find Blood (Dijkstra) + reserve ──
 with tab3:
     section_header("Find Blood via Network Graph (Dijkstra)")
     hospitals = get_all_hospitals()
@@ -148,33 +150,50 @@ with tab3:
     col1, col2, col3 = st.columns(3)
     with col1:
         hosp_names = [h["name"] for h in hospitals]
-        src_name = st.selectbox("Your Hospital", hosp_names, index=0)
+        default_idx = next((i for i, h in enumerate(hospitals) if h["id"] == _hosp_id), 0)
+        src_name = st.selectbox("Your Hospital", hosp_names, index=default_idx)
     with col2:
         need_bg = st.selectbox("Blood Group Needed", BLOOD_GROUPS, key="find_bg")
     with col3:
         need_units = st.number_input("Units Needed", min_value=1, max_value=50, value=3)
 
-    find_clicked = st.button("Find Nearest Blood Source", use_container_width=True)
-    if find_clicked:
-        from utils.database import get_blood_units as get_bu
+    if st.button("Find Nearest Blood Source", use_container_width=True):
         src_hosp = next((h for h in hospitals if h["name"] == src_name), None)
         if src_hosp:
             graph = build_hospital_graph(hospitals)
-            all_inv = get_bu()
-            nearest = graph.nearest_hospitals_with_blood(src_hosp["id"], need_bg, all_inv)
+            st.session_state["em_results"] = {
+                "group": need_bg, "units": int(need_units),
+                "rows": graph.nearest_hospitals_with_blood(src_hosp["id"], need_bg, get_bu()),
+            }
 
-            if nearest:
-                alert_banner(f"Found {len(nearest)} hospitals with {need_bg} blood!", "success")
-                rows = []
-                for r in nearest[:6]:
-                    eta = round(r["distance_km"] / 5 * 15, 0)  # ~15min per 5km
-                    rows.append({
-                        "Hospital": r["hospital_name"],
-                        "Distance": f"{r['distance_km']} km",
-                        "Stock": f"{r['units_available']} units",
-                        "ETA": f"~{int(eta)} min"
-                    })
-                styled_table(pd.DataFrame(rows))
+    found = st.session_state.get("em_results")
+    if found:
+        if not found["rows"]:
+            alert_banner(f"No hospitals in the network have {found['group']} blood available.", "danger")
+        else:
+            alert_banner(f"Found {len(found['rows'])} hospitals with {found['group']} blood!", "success")
+            styled_table(pd.DataFrame([{
+                "Hospital": r["hospital_name"],
+                "Distance": f"{r['distance_km']} km",
+                "Stock": f"{r['units_available']} units",
+                "ETA": f"~{int(round(r['distance_km'] / 5 * 15))} min",
+            } for r in found["rows"][:6]]))
+
+            open_requests = [r for r in get_blood_requests(_scope)
+                             if r["status"] in ("PENDING", "RESERVED") and r["blood_group"] == found["group"]]
+            if open_requests:
+                section_header("Reserve for an open request")
+                labels = {f"#{r['id']} · {r['patient_name']} · {r['units_needed']}u {r['blood_group']}": r for r in open_requests}
+                chosen = labels[st.selectbox("Request", list(labels.keys()))]
+                reserve_error = None
+                for r in found["rows"][:6]:
+                    take = min(chosen["units_needed"], r["units_available"])
+                    if st.button(f"Reserve {take} unit(s) from {r['hospital_name']}", key=f"resv_{r['hospital_id']}"):
+                        ok, reserve_error, _ = attempt(reserve_units, user, chosen["id"], r["hospital_id"], found["group"], take)
+                        if ok:
+                            st.toast(f"Reserved {take} unit(s) at {r['hospital_name']}")
+                            st.rerun()
+                if reserve_error:
+                    alert_banner(reserve_error, "danger")
             else:
-                alert_banner(f"No hospitals in the network have {need_bg} blood available.", "danger")
-
+                st.caption(f"No open {found['group']} request to reserve for. Create one in the 'New Request' tab.")

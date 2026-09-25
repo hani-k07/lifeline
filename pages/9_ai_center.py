@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import random
 
 import streamlit as st
 import pandas as pd
@@ -20,7 +19,7 @@ from lifeline.privacy import scrub_rows, scrub_text
 from utils.sidebar import render_sidebar
 from utils.database import (
     get_all_hospitals, get_blood_units, get_blood_requests,
-    get_transfusions, get_audit_logs, get_inventory_changes, log_ai_usage, get_person_names,
+    get_transfusions, get_audit_logs, get_inventory_events, get_daily_usage, log_ai_usage, get_person_names,
 )
 from ai_engine import (
     ai_demand_forecast, ai_emergency_triage,
@@ -76,8 +75,7 @@ with tab1:
 
     alert_banner(f"Current Stock: {current_stock} units of {blood_group} at {selected_hosp_name}", "info")
 
-    random.seed(selected_hosp_id + ord(blood_group[0]))
-    historical = [round(random.uniform(1.5, 8.0), 1) for _ in range(14)]
+    historical = get_daily_usage(selected_hosp_id, blood_group, 14)      # real usage from the event ledger
     forecast = forecast_demand(historical, window=7, forecast_days=7)
     risk = detect_shortage_risk(current_stock, forecast)
 
@@ -240,9 +238,9 @@ with tab4:
                 text_fields=("description",), names=names,
             )
             inv_changes = scrub_rows(
-                get_inventory_changes(_hosp_id, 30),
-                keep=("hospital_id", "blood_group", "change_type", "units_delta", "changed_at", "changed_by"),
-                text_fields=("reason",), names=names,
+                get_inventory_events(_hosp_id, 30),
+                keep=("hospital_id", "blood_group", "event_type", "at", "actor_id"),
+                text_fields=("note",), names=names,
             )
             response = ai_anomaly_detection(transfusions, audit, inv_changes)
             log_ai_usage("anomaly_detection", "log_scan", response, _hosp_id, _uid)

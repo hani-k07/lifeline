@@ -16,12 +16,11 @@ from utils.styles import (
 from lifeline.auth.rbac import require_page
 from lifeline.auth.roles import Role
 from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_blood_units, add_blood_units,
-    update_blood_units, add_audit_log, get_blood_summary,
-)
+from lifeline.services.inventory import issue_units, receive_units
+from utils.actions import attempt
+from utils.database import get_all_hospitals, get_blood_units
 
-require_page(__file__)
+user = require_page(__file__)
 
 inject_all_styles(get_theme())
 render_sidebar()
@@ -119,7 +118,6 @@ with tab2:
     section_header("Add New Blood Units")
     
     error_msg = None
-    success_msg = None
     
     with st.form("add_stock_form"):
         col1, col2, col3 = st.columns(3)
@@ -133,17 +131,12 @@ with tab2:
 
         submitted = st.form_submit_button("Add to Inventory", use_container_width=True)
         if submitted:
-            ok = add_blood_units(sel_hosp_id, bg, qty, str(expiry), _uid)
+            ok, error_msg, _ = attempt(receive_units, user, sel_hosp_id, bg, int(qty), expiry)
             if ok:
-                add_audit_log("INVENTORY_ADD", f"Added {qty} units of {bg} at {sel_hosp_name}", _uid)
-                success_msg = f"Added {qty} units of {bg} to {sel_hosp_name}"
-            else:
-                error_msg = "Failed to add units."
+                st.toast(f"Added {qty} unit(s) of {bg} to {sel_hosp_name}")
+                st.rerun()
 
-    if success_msg:
-        alert_banner(success_msg, "success")
-        st.rerun()
-    elif error_msg:
+    if error_msg:
         alert_banner(error_msg, "danger")
 
 # ── Tab 3: Consume Stock ──
@@ -151,7 +144,6 @@ with tab3:
     section_header("Record Stock Consumption")
     
     error_msg_c = None
-    success_msg_c = None
     
     with st.form("consume_form"):
         col1, col2 = st.columns(2)
@@ -162,16 +154,10 @@ with tab3:
         reason_c = st.text_input("Reason / Patient Reference", placeholder="e.g. Surgery – Ward 3")
         submitted_c = st.form_submit_button("Record Consumption", use_container_width=True)
         if submitted_c:
-            ok = update_blood_units(sel_hosp_id, bg_c, -qty_c, reason_c, _uid)
+            ok, error_msg_c, _ = attempt(issue_units, user, sel_hosp_id, bg_c, int(qty_c), reason_c)
             if ok:
-                add_audit_log("INVENTORY_CONSUME", f"Consumed {qty_c} units of {bg_c} — {reason_c}", _uid)
-                success_msg_c = f"Recorded consumption of {qty_c} units of {bg_c}"
-            else:
-                error_msg_c = f"Failed — no {bg_c} stock record found for {sel_hosp_name}."
+                st.toast(f"Recorded consumption of {qty_c} unit(s) of {bg_c}")
+                st.rerun()
 
-    if success_msg_c:
-        alert_banner(success_msg_c, "success")
-        st.rerun()
-    elif error_msg_c:
+    if error_msg_c:
         alert_banner(error_msg_c, "danger")
-
