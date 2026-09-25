@@ -161,25 +161,15 @@ class TriageQueue:
 #  SECTION 3: BLOOD COMPATIBILITY MATCHING
 # ─────────────────────────────────────────────
 
-# Standard ABO + Rh compatibility matrix
-# can_receive[recipient] = set of donor types that are compatible
-BLOOD_COMPATIBILITY: dict[str, list[str]] = {
-    "A+":  ["A+", "A-", "O+", "O-"],
-    "A-":  ["A-", "O-"],
-    "B+":  ["B+", "B-", "O+", "O-"],
-    "B-":  ["B-", "O-"],
-    "AB+": ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
-    "AB-": ["A-", "B-", "AB-", "O-"],
-    "O+":  ["O+", "O-"],
-    "O-":  ["O-"],
-}
+# ABO/Rh compatibility now lives in lifeline.engine.compatibility (single, tested source of truth).
+from lifeline.constants import BLOOD_GROUPS  # noqa: E402
+from lifeline.engine.compatibility import BLOOD_COMPATIBILITY  # noqa: E402,F401
 
-BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
 
 
 def get_compatible_donors(recipient_group: str) -> list[str]:
     """Returns list of blood groups that can donate to the recipient."""
-    return BLOOD_COMPATIBILITY.get(recipient_group, [])
+    return list(BLOOD_COMPATIBILITY.get(recipient_group, ()))
 
 
 def get_compatible_recipients(donor_group: str) -> list[str]:
