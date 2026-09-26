@@ -24,9 +24,9 @@ def _apply(fig: go.Figure, *, title: str | None, height: int, x_title: str | Non
         hoverlabel=dict(bgcolor=p.bg_elevated, font=dict(color=p.text_primary)),
     )
     fig.update_xaxes(title=dict(text=x_title, font=dict(color=p.text_secondary)) if x_title else None, gridcolor=p.border_subtle,
-                     zerolinecolor=p.border_subtle, linecolor=p.border_subtle, tickfont=dict(color=p.text_secondary))
+                     zerolinecolor=p.border_subtle, linecolor=p.border_subtle, tickfont=dict(color=p.text_secondary), automargin=True)
     fig.update_yaxes(title=dict(text=y_title, font=dict(color=p.text_secondary)) if y_title else None, gridcolor=p.border_subtle,
-                     zerolinecolor=p.border_subtle, linecolor=p.border_subtle, tickfont=dict(color=p.text_secondary))
+                     zerolinecolor=p.border_subtle, linecolor=p.border_subtle, tickfont=dict(color=p.text_secondary), automargin=True)
     return fig
 
 

@@ -153,12 +153,16 @@ def _step_sources(flow: dict[str, Any], hospitals: list[dict]) -> None:
         ui.render(ui.html_table(plan, [ui.Col("Reserve at", "hospital_name"), ui.Col("Group", "unit_group", render=lambda v, r: ui.blood_group_badge(v)),
                                        ui.Col("Units", "take", align="right"), ui.Col("ETA (min)", "eta_min", align="right"),
                                        ui.Col("Route", "route")]))
-        graph = get_road_graph(hospitals)
-        route = [(graph.nodes[n].lat, graph.nodes[n].lon) for n in plan[0]["path"]]
-        edges = [(graph.nodes[a].lat, graph.nodes[a].lon, graph.nodes[b].lat, graph.nodes[b].lon) for a, b, _ in graph.edges()]
-        charts.show(charts.route_map(hospitals, edges, route, height=340))
-        st.caption(f"Highlighted: fastest route from {plan[0]['hospital_name']} to {need['hospital_name']} "
-                   f"({plan[0]['distance_km']} km, about {int(round(plan[0]['eta_min']))} min).")
+        remote = next((p for p in plan if len(p["path"]) > 1), None)      # a source at the requesting hospital needs no transport
+        if remote is None:
+            st.caption(f"Every unit in this plan is already in stock at {need['hospital_name']}: no transport is needed.")
+        else:
+            graph = get_road_graph(hospitals)
+            route = [(graph.nodes[n].lat, graph.nodes[n].lon) for n in remote["path"]]
+            edges = [(graph.nodes[a].lat, graph.nodes[a].lon, graph.nodes[b].lat, graph.nodes[b].lon) for a, b, _ in graph.edges()]
+            charts.show(charts.route_map(hospitals, edges, route, height=340))
+            st.caption(f"Highlighted: fastest route from {remote['hospital_name']} to {need['hospital_name']} "
+                       f"({remote['distance_km']} km, about {int(round(remote['eta_min']))} min).")
     with st.expander("Backup hospitals (fewest road hops first)"):
         ui.data_table(flow["backups"], [ui.Col("Hospital", "name"), ui.Col("Hops", "level", align="right"),
                                         ui.Col("Distance (km)", "distance_km", align="right")], key="em_backup", page_size=6)
