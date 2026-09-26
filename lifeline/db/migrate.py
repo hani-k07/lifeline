@@ -68,10 +68,10 @@ def ensure_schema() -> list[int]:
     """Bring an existing DB up to date; raise DatabaseNotInitialised if there is none."""
     path = get_settings().db_path
     if not path.exists():
-        raise DatabaseNotInitialised(f"Database not found at {path}. Run: python setup_database.py")
+        raise DatabaseNotInitialised(f"Database not found at {path}. Run: python -m scripts.setup_db")
     with connect() as conn:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'users'").fetchone():
-            raise DatabaseNotInitialised("Database has no tables. Run: python setup_database.py")
+            raise DatabaseNotInitialised("Database has no tables. Run: python -m scripts.setup_db")
         applied = apply_migrations(conn)
         conn.execute("PRAGMA journal_mode = WAL")   # persistent; lets several sessions read while one writes
     return applied

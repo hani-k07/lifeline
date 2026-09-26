@@ -299,3 +299,50 @@ Items 1–4 and 8 of §3, P0-1, and the UI issues you reported are fixed on `mai
 **Still open:** AI client rewrite and advisory labelling (Phase 4); UI rebuild, 8-slice pie, WCAG contrast (Phase 5); caching, logging, self-test page, CI, Docker (Phase 6); docs rewrite (Phase 7).
 
 **Quality gates:** `pytest` 434 passed; `ruff` + `mypy` clean; coverage of `lifeline/` 98 % (`lifeline/engine` 98 %).
+
+---
+
+## 13. Status after Phase 5 (UI/UX)
+
+All ten pages and the login page are rebuilt on the design system (`lifeline/ui`). Phase 4 (AI client rewrite) was skipped by choice; only the AI behaviour visible on the AI Center page was done.
+
+| Finding / requirement | Status | Where |
+|---|---|---|
+| Duplicate sidebar, leaked HTML, light-mode contrast (reported UI bugs) | **Fixed for good**: built-in nav hidden, one component layer, contrast checked by tests in both themes | `.streamlit/config.toml`, `lifeline/ui/`, `tests/ui/test_contrast.py` |
+| N6 `st.rerun()` swallowing success messages | **Fixed**: toasts for success, errors shown in the same run, step navigation via button callbacks | pages |
+| N7 unescaped patient names in HTML | **Fixed**: every component escapes; safe markup is a distinct `Html` type | `lifeline/ui/components.py` |
+| 8-slice pie chart, colour-only encoding | **Removed**: bars only, hatched for Rh−; blood-group badges always print the label | `lifeline/ui/charts.py` |
+| Dashboard on one screen | **Verified** at 1440×900 in the browser (no scrolling) | `pages/1_dashboard.py` |
+| Irreversible actions | Two-step confirm on issue, dispatch, cancel, discard, transfusion, lend, return, reject | `confirm_dialog` |
+| Emergency flow | Three steps; request + reservations saved atomically (`create_and_reserve`) | `pages/3_emergency.py` |
+| AI advisory labelling, AI off / error states | **Done** on the page: "AI suggestion — verify clinically", "AI is off" without a key, failures shown as warnings and not logged | `pages/9_ai_center.py` |
+| Responsive | Checked at 768 px: narrower sidebar, columns stack, two-column stock grid | `lifeline/ui/theme.css` |
+
+Removed: `utils/styles.py` (701 lines), `utils/sidebar.py`.
+
+## 14. Status after Phase 6 (hardening)
+
+| Item | Status |
+|---|---|
+| Structured logging | **Done.** JSON lines, rotating file, redacted (`lifeline/logging_setup.py`) |
+| System self-test | **Done.** Admin → System self-test (`lifeline/selftest.py`) |
+| CI / Docker / Makefile | **Written.** CI runs ruff, mypy, pytest with a 90 % floor on `engine/` and `auth/`. The Dockerfile has **not been built** (Docker is not installed on the development machine) |
+| Page-load < 1.5 s | **Met and tested**: 0.03–0.1 s per page on seed data (first dashboard load 0.85 s including imports) |
+| Caching (`st.cache_data`) | **Deliberately not added** — the budget is met by a factor of ten; a cache would add invalidation risk for no visible gain |
+| ruff + mypy on legacy code | **Done.** Both cover `lifeline/`, `pages/`, `utils/`, `app.py`, `ai_engine.py`, `tests/`, `scripts/` |
+| Coverage | `engine/` and `auth/` 99 % |
+
+Removed dead modules: `utils/pdf_generator.py` (never called), `utils/run.py`, `extras/`.
+
+## 15. Status after Phase 7 (docs) and what is left
+
+Rewritten or added: `README.md`, `ARCHITECTURE.md`, `ALGORITHMS.md`, `CHANGELOG.md`. Deleted: both `PROJECT_REPORT.md`, `DSA_ENGINE_DOCUMENTATION.md`, `docs/DSA_MAPPING.md`.
+
+**Left, and only you can do these:**
+1. Rotate the OpenRouter key.
+2. Have a clinician review `docs/CLINICAL_REFERENCE.md` (syphilis → DEFER and blood thinners → DEFER need explicit sign-off).
+3. Build the Docker image once and check it starts.
+4. Decide whether to do Phase 4 (AI client: retries, response cache, rate limit, PII-scrubber module).
+5. `build/` (6 MB of CMake output, git-ignored) can be deleted whenever you like.
+
+**Quality gates at the end:** `pytest` 577 passed; `ruff` and `mypy` clean on the whole codebase; coverage of `engine/` + `auth/` 99 %.

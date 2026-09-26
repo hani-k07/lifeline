@@ -180,4 +180,4 @@ def test_create_admin_cli_without_database(monkeypatch, capsys):
     from lifeline.auth import create_admin
 
     assert create_admin.main() == 1
-    assert "setup_database.py" in capsys.readouterr().out
+    assert "scripts.setup_db" in capsys.readouterr().out

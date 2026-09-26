@@ -1,4 +1,4 @@
-"""Demo accounts. Seeded by setup_database.py; only *shown* on the login page when APP_ENV=demo."""
+"""Demo accounts. Seeded by scripts/setup_db.py; only *shown* on the login page when APP_ENV=demo."""
 from __future__ import annotations
 
 from typing import NamedTuple
