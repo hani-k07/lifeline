@@ -14,6 +14,5 @@ select = ["E", "F", "I", "B", "UP"]
 per-file-ignores = { "pages/*" = ["E402", "E501"], "app.py" = ["E402", "E501"], "lifeline/selftest.py" = ["E501"], "ai_engine.py" = ["E501"], "lifeline/engine/*" = ["E501"], "lifeline/ui/*" = ["E501"], "tests/*" = ["E501"] }   # rule tables: one rule per line
 
 [tool.mypy]
-python_version = "3.10"
 ignore_missing_imports = true
 files = ["lifeline", "utils", "ai_engine.py", "app.py", "pages"]

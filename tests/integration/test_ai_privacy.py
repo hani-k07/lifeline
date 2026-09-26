@@ -7,7 +7,7 @@ import requests
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from lifeline.config import get_settings
+from lifeline.config import ROOT, get_settings
 from lifeline.db.connection import connect
 from lifeline.db.repositories import people
 
@@ -60,7 +60,7 @@ def secrets() -> list[str]:
 
 
 def open_ai_center():
-    at = AppTest.from_file("pages/9_ai_center.py", default_timeout=90)
+    at = AppTest.from_file(str(ROOT / "pages/9_ai_center.py"), default_timeout=90)
     for k, v in dict(logged_in=True, user_id=1, user_email="a@x.pk", user_name="Admin", user_role="super_admin",
                      user_hospital_id=None, user_hospital_name="Global", last_active=time.time()).items():
         at.session_state[k] = v
@@ -151,7 +151,7 @@ def test_without_an_api_key_the_ai_features_are_off_and_say_so(monkeypatch, demo
 
 
 def test_a_hospital_user_only_sees_their_own_hospital_in_the_ai_center(sent):
-    at = AppTest.from_file("pages/9_ai_center.py", default_timeout=90)
+    at = AppTest.from_file(str(ROOT / "pages/9_ai_center.py"), default_timeout=90)
     for k, v in dict(logged_in=True, user_id=2, user_email="m@x.pk", user_name="Mayo", user_role="hospital_admin",
                      user_hospital_id=1, user_hospital_name="Mayo Hospital", last_active=time.time()).items():
         at.session_state[k] = v

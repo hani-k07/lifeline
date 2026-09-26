@@ -6,7 +6,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from lifeline.config import get_settings
+from lifeline.config import ROOT, get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +16,7 @@ def env(monkeypatch, demo_db):
 
 
 def open_page(page, role="hospital_admin", hospital_id=1):
-    at = AppTest.from_file(f"pages/{page}.py", default_timeout=90)
+    at = AppTest.from_file(str(ROOT / f"pages/{page}.py"), default_timeout=90)
     for k, v in dict(logged_in=True, user_id=2, user_email="mayo@lifeline.com", user_name="Mayo Admin", user_role=role,
                      user_hospital_id=hospital_id, user_hospital_name="Mayo Hospital", last_active=time.time()).items():
         at.session_state[k] = v

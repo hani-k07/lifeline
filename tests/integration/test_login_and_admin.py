@@ -6,7 +6,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from lifeline.config import get_settings
+from lifeline.config import ROOT, get_settings
 from lifeline.demo import DEMO_PASSWORD
 
 
@@ -24,11 +24,11 @@ def submit(at):
 
 
 def login_page():
-    return AppTest.from_file("app.py", default_timeout=90).run()
+    return AppTest.from_file(str(ROOT / "app.py"), default_timeout=90).run()
 
 
 def admin_page(role="super_admin"):
-    at = AppTest.from_file("pages/10_admin.py", default_timeout=90)
+    at = AppTest.from_file(str(ROOT / "pages/10_admin.py"), default_timeout=90)
     for k, v in dict(logged_in=True, user_id=1, user_email="admin@lifeline.com", user_name="Admin", user_role=role,
                      user_hospital_id=None, user_hospital_name="Global", last_active=time.time()).items():
         at.session_state[k] = v

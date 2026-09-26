@@ -5,13 +5,15 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from lifeline.config import ROOT
+
 BUDGET_SECONDS = 1.5
 PAGES = ["1_dashboard", "2_inventory", "3_emergency", "4_exchange", "5_screening",
          "6_contracts", "7_transfusion", "8_analytics", "9_ai_center", "10_admin"]
 
 
 def render(page):
-    at = AppTest.from_file(f"pages/{page}.py", default_timeout=60)
+    at = AppTest.from_file(str(ROOT / f"pages/{page}.py"), default_timeout=60)
     for k, v in dict(logged_in=True, user_id=1, user_email="admin@lifeline.com", user_name="Admin", user_role="super_admin",
                      user_hospital_id=None, user_hospital_name="Global", last_active=time.time()).items():
         at.session_state[k] = v

@@ -6,7 +6,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from lifeline.config import get_settings
+from lifeline.config import ROOT, get_settings
 
 PAGES = ["1_dashboard", "2_inventory", "3_emergency", "4_exchange", "5_screening",
          "6_contracts", "7_transfusion", "8_analytics", "9_ai_center", "10_admin"]
@@ -27,7 +27,7 @@ def switches(monkeypatch, demo_db):
 
 
 def run_page(page, role, *, hospital_id="default", last_active=None):
-    at = AppTest.from_file(f"pages/{page}.py", default_timeout=90)
+    at = AppTest.from_file(str(ROOT / f"pages/{page}.py"), default_timeout=90)
     if role is not None:
         if hospital_id == "default":
             hospital_id = None if role == "super_admin" else 1
