@@ -5,9 +5,11 @@ Powers: Demand Forecasting, Emergency Triage, Chatbot Assistant, Anomaly Detecti
 Model: meta-llama/llama-3.3-70b-instruct (free tier on OpenRouter)
 """
 from __future__ import annotations
+
 import json
-import requests
 from datetime import datetime
+
+import requests
 
 from lifeline.config import get_settings
 from lifeline.privacy import scrub_text
@@ -21,6 +23,16 @@ FALLBACK_MODELS = [
     "qwen/qwen3-8b:free",
 ]
 
+# What the call layer returns instead of an answer. Pages must show these as a problem, never as AI advice.
+ERR_NO_KEY = "OpenRouter API key not configured. Add OPENROUTER_API_KEY to your .env file."
+ERR_TIMEOUT = "AI request timed out. Please try again."
+ERR_BUSY = "All AI models are currently rate-limited. Please wait 1 minute and try again."
+
+
+def is_error(text: str) -> bool:
+    return text in (ERR_NO_KEY, ERR_TIMEOUT, ERR_BUSY)
+
+
 def _get_api_key() -> str:
     return get_settings().openrouter_api_key.get_secret_value().strip()
 
@@ -29,7 +41,7 @@ def _call_openrouter(system_prompt: str, user_message: str, temperature: float =
     """Core API call with automatic fallback to alternative free models on 429."""
     OPENROUTER_API_KEY = _get_api_key()
     if not OPENROUTER_API_KEY:
-        return "OpenRouter API key not configured. Add OPENROUTER_API_KEY to your .env file."
+        return ERR_NO_KEY
 
     models_to_try = [DEFAULT_MODEL] + FALLBACK_MODELS
 
@@ -58,13 +70,13 @@ def _call_openrouter(system_prompt: str, user_message: str, temperature: float =
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
         except requests.exceptions.Timeout:
-            return "AI request timed out. Please try again."
+            return ERR_TIMEOUT
         except requests.exceptions.RequestException:
             continue
         except (KeyError, IndexError):
             continue
 
-    return "All AI models are currently rate-limited. Please wait 1 minute and try again, or visit openrouter.ai to get a new API key."
+    return ERR_BUSY
 
 
 # ─────────────────────────────────────────────
@@ -186,7 +198,7 @@ Rules:
 
     OPENROUTER_API_KEY = _get_api_key()
     if not OPENROUTER_API_KEY:
-        return "OpenRouter API key not configured. Add OPENROUTER_API_KEY to your .env file."
+        return ERR_NO_KEY
 
     models_to_try = [DEFAULT_MODEL] + FALLBACK_MODELS
 
@@ -213,7 +225,7 @@ Rules:
         except Exception:
             continue
 
-    return "All AI models are currently rate-limited. Please wait 1 minute and try again."
+    return ERR_BUSY
 
 
 # ─────────────────────────────────────────────

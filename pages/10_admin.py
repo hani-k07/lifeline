@@ -1,172 +1,116 @@
-# pages/10_admin.py
-"""Super Admin Panel — LIFELINE v6.0"""
+"""Admin console: users, hospitals, the audit trail, AI usage and the system self-test."""
 from __future__ import annotations
 
+import re
+
 import streamlit as st
-import pandas as pd
-from datetime import datetime
 
-st.set_page_config(page_title="Admin — LIFELINE", layout="wide")
-
-from utils.styles import (
-    inject_all_styles, get_theme, section_header, alert_banner,
-    blood_badge, status_pill, styled_table, metric_card,
-)
-from lifeline.auth.rbac import require_page
+from lifeline import selftest
+from lifeline.auth.passwords import PasswordPolicyError, validate_password
 from lifeline.auth.roles import Role
 from lifeline.auth.service import create_user
-from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_all_users, get_audit_logs,
-    get_ai_logs,
-)
+from lifeline.ui import components as ui
+from lifeline.ui.layout import guard, page
+from utils.database import get_ai_logs, get_all_hospitals, get_all_users, get_audit_logs, get_blood_summary
 
-require_page(__file__)
+user = page(__file__, "Admin", "Users, hospitals, the audit trail and system health")
 
-inject_all_styles(get_theme())
-render_sidebar()
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
-_role = st.session_state.get("user_role", "")
-_uid = int(st.session_state.get("user_id", 0))
 
-# ── Title Block ──
-st.markdown("""
-<div style="margin-bottom:24px">
-    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Super Admin Panel</h1>
-    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
-        System management, user administration, and audit trail
-    </p>
-</div>""", unsafe_allow_html=True)
+def _stamp(value: object) -> str:
+    return str(value or "")[:16].replace("T", " ")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "User Management",
-    "Hospital Network",
-    "Audit Logs",
-    "AI Usage Logs",
-])
 
-with tab1:
-    section_header("Registered Users")
-    users = get_all_users()
-
-    if users:
-        user_rows = []
-        for u in users:
-            user_rows.append({
-                "Name": u.get("name", "—"),
-                "Email": u.get("email", "—"),
-                "Role": status_pill(Role(u["role"]).label if u.get("role") in [r.value for r in Role] else "unknown"),
-                "Hospital": u.get("hospital_name", "Global"),
-                "Created": u.get("created_at", "")[:16].replace("T", " ") if u.get("created_at") else "—"
-            })
-        df_show = pd.DataFrame(user_rows)
-        styled_table(df_show)
-    else:
-        alert_banner("No users registered.", "info")
-
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-    section_header("Add New User")
-
-    error_msg = None
-
-    with st.form("add_user_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            new_email = st.text_input("Email *")
-            new_name = st.text_input("Full Name *")
-            new_role = st.selectbox("Role", [r.value for r in Role], format_func=lambda v: Role(v).label, index=2)
-        with col2:
-            new_password = st.text_input("Password * (min 8 characters)", type="password")
-            hospitals = get_all_hospitals()
-            hosp_map = {"None (Global — Super Admin only)": None}
-            for h in hospitals:
-                hosp_map[h["name"]] = h["id"]
-            sel_hosp = st.selectbox("Assign Hospital", list(hosp_map.keys()))
-            new_hosp_id = hosp_map[sel_hosp]
-
-        submitted = st.form_submit_button("Create User", use_container_width=True)
-        if submitted:
-            ok, message = create_user(new_email, new_name, new_password, new_role, new_hosp_id, _uid)
-            if ok:
-                st.toast(message)
-                st.rerun()
-            error_msg = message
-
-    if error_msg:
-        alert_banner(error_msg, "danger")
-
-with tab2:
+with guard():
     hospitals = get_all_hospitals()
-    section_header("Hospital Network", f"{len(hospitals)} Facilities")
+    tab_users, tab_hospitals, tab_audit, tab_ai, tab_health = st.tabs(["Users", "Hospitals", "Audit log", "AI usage", "System self-test"])
 
-    if hospitals:
-        hosp_rows = []
-        for h in hospitals:
-            hosp_rows.append({
-                "ID": h.get("id", "—"),
-                "Hospital Name": h.get("name", "—"),
-                "City": h.get("city", "—"),
-                "Address": h.get("address", "—"),
-                "Phone": h.get("phone", "—"),
-                "Coordinates": f"{h.get('latitude', 0.0):.4f}, {h.get('longitude', 0.0):.4f}"
-            })
-        df_h = pd.DataFrame(hosp_rows)
-        styled_table(df_h)
+    with tab_users:
+        users = get_all_users()
+        ui.kpi_row(ui.kpi_card("Users", len(users)),
+                   *(ui.kpi_card(role.label, sum(1 for u in users if u["role"] == role.value)) for role in Role))
+        ui.data_table(
+            users,
+            [ui.Col("Name", "name"), ui.Col("Email", "email"),
+             ui.Col("Role", "role", render=lambda v, r: ui.status_pill(Role(v).label) if v in {x.value for x in Role} else ui.status_pill("unknown")),
+             ui.Col("Hospital", "hospital_name", render=lambda v, r: v or "Global"), ui.Col("Created", "created_at", render=lambda v, r: _stamp(v))],
+            key="adm_users", page_size=10, empty_title="No users yet", empty_body="Create the first one below.")
 
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-        section_header("Network Statistics")
-        
-        from utils.database import get_blood_summary
-        total_network_units = 0
-        for h in hospitals:
-            summary = get_blood_summary(h["id"])
-            total_network_units += sum(summary.values())
+        ui.section_header("Add a user")
+        c1, c2 = st.columns(2)
+        email = c1.text_input("Email", key="nu_email")
+        name = c1.text_input("Full name", key="nu_name")
+        role = c2.selectbox("Role", [r.value for r in Role], format_func=lambda v: Role(v).label, index=2, key="nu_role")
+        by_name = {h["name"]: h["id"] for h in hospitals}
+        needs_hospital = Role(role) is not Role.SUPER_ADMIN
+        hospital_name = c2.selectbox("Hospital", list(by_name), key="nu_hosp", disabled=not needs_hospital,
+                                     help="A super admin belongs to no single hospital." if not needs_hospital else None)
+        password = c1.text_input("Password", type="password", key="nu_pw", help="At least 8 characters.")
+        problems: dict[str, str] = {}
+        if email.strip() and not EMAIL.fullmatch(email.strip()):
+            problems["email"] = "That does not look like an email address."
+        if password:
+            try:
+                validate_password(password)
+            except PasswordPolicyError as exc:
+                problems["password"] = str(exc)
+        ui.field_error(problems.get("email"))
+        ui.field_error(problems.get("password"))
+        if st.button("Create user", type="primary", key="nu_go"):
+            if not (email.strip() and name.strip() and password):
+                ui.field_error("Email, full name and password are all required.")
+            elif not problems:
+                ok, message = create_user(email, name, password, role, by_name[hospital_name] if needs_hospital else None, user.id)
+                if ok:
+                    st.toast(message)
+                    st.rerun()
+                ui.alert_banner(message, "danger", title="Could not create the user")
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(metric_card("Total Hospitals", f"{len(hospitals)}", icon="Hospitals", variant="default"), unsafe_allow_html=True)
-        with c2:
-            st.markdown(metric_card("Total Network Units", f"{total_network_units}", icon="Stock", variant="default"), unsafe_allow_html=True)
-        with c3:
-            cities_count = len(set(h.get("city", "Lahore") for h in hospitals))
-            st.markdown(metric_card("Cities Covered", f"{cities_count}", icon="Coverage", variant="success"), unsafe_allow_html=True)
+    with tab_hospitals:
+        network_units = sum(sum(get_blood_summary(h["id"]).values()) for h in hospitals)
+        ui.kpi_row(ui.kpi_card("Hospitals", len(hospitals)), ui.kpi_card("Units in the network", network_units),
+                   ui.kpi_card("Cities", len({h.get("city") for h in hospitals})))
+        ui.data_table(
+            hospitals,
+            [ui.Col("Hospital", "name"), ui.Col("City", "city"), ui.Col("Address", "address"), ui.Col("Phone", "phone"),
+             ui.Col("Stock", "stock_status", render=lambda v, r: ui.status_pill(v or "ok")),
+             ui.Col("Coordinates", "latitude", render=lambda v, r: f"{r['latitude']:.4f}, {r['longitude']:.4f}", sortable=False, search=False)],
+            key="adm_hosp", page_size=10, empty_title="No hospitals", empty_body="Seed the database or add hospitals.")
 
-with tab3:
-    section_header("System Audit Trail")
+    with tab_audit:
+        limit = st.slider("Show the last N entries", 10, 200, 50, key="adm_limit")
+        ui.data_table(
+            get_audit_logs(limit),
+            [ui.Col("When", "timestamp", render=lambda v, r: _stamp(v)), ui.Col("Action", "action_type", render=lambda v, r: ui.status_pill(v or "-")),
+             ui.Col("Description", "description"), ui.Col("By", "user_name", render=lambda v, r: v or "system")],
+            key="adm_audit", page_size=15, empty_title="No audit entries yet", empty_body="Every change is recorded here.")
+        st.caption("The audit log is append-only: entries cannot be edited or deleted from the application or the database.")
 
-    limit = st.slider("Show last N entries", 10, 200, 50)
-    logs = get_audit_logs(limit)
+    with tab_ai:
+        ui.data_table(
+            get_ai_logs(50),
+            [ui.Col("When", "created_at", render=lambda v, r: _stamp(v)), ui.Col("Feature", "feature", render=lambda v, r: ui.status_pill(v or "-")),
+             ui.Col("Input", "input_summary"), ui.Col("Response preview", "response_preview", render=lambda v, r: f"{str(v or '')[:70]}…"),
+             ui.Col("Hospital", "hospital_id", render=lambda v, r: v if v else "network")],
+            key="adm_ai", page_size=10, empty_title="No AI usage yet", empty_body="Answers from the AI Center are logged here.")
 
-    if logs:
-        log_rows = []
-        for log in logs:
-            log_rows.append({
-                "Timestamp": log.get("timestamp", "")[:16].replace("T", " "),
-                "Action": status_pill(log.get("action_type", "—")),
-                "Description": log.get("description", "—"),
-                "User": log.get("user_name", "—")
-            })
-        df_logs = pd.DataFrame(log_rows)
-        styled_table(df_logs)
-    else:
-        alert_banner("No audit entries yet.", "info")
-
-with tab4:
-    section_header("AI Feature Usage Logs")
-    ai_logs = get_ai_logs(50)
-
-    if ai_logs:
-        ai_rows = []
-        for log in ai_logs:
-            ai_rows.append({
-                "Timestamp": log.get("created_at", "")[:16].replace("T", " "),
-                "Feature": status_pill(log.get("feature", "—")),
-                "Input": log.get("input_summary", "—"),
-                "Response Preview": log.get("response_preview", "")[:60] + "...",
-                "Hospital ID": log.get("hospital_id", "—")
-            })
-        df_ai = pd.DataFrame(ai_rows)
-        styled_table(df_ai)
-    else:
-        alert_banner("No AI usage logs yet.", "info")
-
+    with tab_health:
+        ui.section_header("System self-test", "runs every engine operation against a known answer and checks the database")
+        if st.button("Run self-test", type="primary", key="st_run"):
+            st.session_state["selftest"] = [r.__dict__ for r in selftest.run_all()]
+        results = st.session_state.get("selftest")
+        if results is None:
+            ui.empty_state("Not run yet", "Press the button to check the engine and the database.", icon="○")
+        else:
+            failed = [r for r in results if not r["ok"]]
+            ui.kpi_row(ui.kpi_card("Checks", len(results)), ui.kpi_card("Passed", len(results) - len(failed), tone="success"),
+                       ui.kpi_card("Failed", len(failed), tone="danger" if failed else "neutral"))
+            if failed:
+                ui.alert_banner(f"{len(failed)} check(s) failed. Do not rely on the system until they are fixed.", "danger", title="Self-test failed")
+            else:
+                ui.alert_banner("Every check passed.", "success", title="Healthy")
+            ui.data_table(results, [ui.Col("Area", "area"), ui.Col("Check", "name"),
+                                    ui.Col("Result", "ok", render=lambda v, r: ui.status_pill("pass" if v else "fail", kind="success" if v else "danger")),
+                                    ui.Col("Time (ms)", "ms", align="right"), ui.Col("Detail", "detail", sortable=False)],
+                          key="st_tbl", page_size=20)

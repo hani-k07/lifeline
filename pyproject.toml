@@ -11,7 +11,7 @@ extend-exclude = ["build", "extras", "docs"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 # Legacy modules are brought under lint phase by phase; new code (lifeline/, tests/) must be clean.
-per-file-ignores = { "pages/*" = ["E402", "E501"], "app.py" = ["E402"], "lifeline/engine/*" = ["E501"], "lifeline/ui/*" = ["E501"], "tests/*" = ["E501"] }   # rule tables: one rule per line
+per-file-ignores = { "pages/*" = ["E402", "E501"], "app.py" = ["E402", "E501"], "lifeline/selftest.py" = ["E501"], "lifeline/engine/*" = ["E501"], "lifeline/ui/*" = ["E501"], "tests/*" = ["E501"] }   # rule tables: one rule per line
 
 [tool.mypy]
 python_version = "3.10"

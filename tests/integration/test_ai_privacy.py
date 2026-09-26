@@ -67,13 +67,13 @@ def open_ai_center():
     return at.run()
 
 
-def click(at, label):
-    next(b for b in at.button if b.label == label).click()
+def click(at, key):
+    at.button(key=key).click()
     return at.run()
 
 
 def test_triage_payload_has_no_patient_names(sent):
-    at = click(open_ai_center(), "AI Triage Analysis")
+    at = click(open_ai_center(), "ai_triage")
     assert not at.exception and sent, "the triage request should have been sent"
     body = " ".join(sent)
     assert "Patient 1" in body
@@ -82,7 +82,7 @@ def test_triage_payload_has_no_patient_names(sent):
 
 
 def test_anomaly_payload_has_no_pii(sent):
-    at = click(open_ai_center(), "Run Anomaly Scan")
+    at = click(open_ai_center(), "ai_anomaly")
     assert not at.exception and sent
     body = " ".join(sent)
     for secret in secrets():
@@ -102,3 +102,58 @@ def test_chat_message_is_scrubbed_before_sending(sent):
     body = " ".join(sent)
     assert sent and name not in body and "35202" not in body
     assert "[NAME]" in body and "[CNIC]" in body
+
+
+# ------------------------------------------------------------------ what the user sees
+
+def fake_reply(monkeypatch, content=None, status=200):
+    """Replace the network call so the page receives `content` (or an HTTP error)."""
+    class Resp:
+        status_code = status
+
+        def raise_for_status(self):
+            if status >= 400:
+                raise requests.exceptions.HTTPError(str(status))
+
+        def json(self):
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: Resp())
+
+
+def page_text(at):
+    return " ".join(m.value for m in at.markdown)
+
+
+def test_a_real_answer_is_labelled_advisory_and_logged(sent, monkeypatch):
+    fake_reply(monkeypatch, "Prioritise Patient 1.")
+    at = click(open_ai_center(), "ai_triage")
+    assert "AI suggestion — verify clinically" in page_text(at) and "Prioritise Patient 1." in page_text(at)
+    conn = sqlite3.connect(get_settings().db_path)
+    assert conn.execute("SELECT feature FROM ai_logs ORDER BY id DESC LIMIT 1").fetchone() == ("emergency_triage",)
+
+
+def test_a_failed_call_is_a_warning_not_an_answer_and_is_not_logged(sent, monkeypatch):
+    fake_reply(monkeypatch, status=500)                                   # every model fails
+    at = click(open_ai_center(), "ai_triage")
+    text = page_text(at)
+    assert "AI unavailable" in text and "verify clinically" not in text
+    conn = sqlite3.connect(get_settings().db_path)
+    assert conn.execute("SELECT COUNT(*) FROM ai_logs").fetchone() == (0,)
+
+
+def test_without_an_api_key_the_ai_features_are_off_and_say_so(monkeypatch, demo_db):
+    monkeypatch.setattr(st, "page_link", lambda *a, **k: None)
+    at = open_ai_center()
+    assert not at.exception
+    assert "AI is off" in page_text(at)
+    assert at.button(key="ai_triage").disabled and at.button(key="ai_anomaly").disabled and at.button(key="ai_forecast").disabled
+
+
+def test_a_hospital_user_only_sees_their_own_hospital_in_the_ai_center(sent):
+    at = AppTest.from_file("pages/9_ai_center.py", default_timeout=90)
+    for k, v in dict(logged_in=True, user_id=2, user_email="m@x.pk", user_name="Mayo", user_role="hospital_admin",
+                     user_hospital_id=1, user_hospital_name="Mayo Hospital", last_active=time.time()).items():
+        at.session_state[k] = v
+    at.run()
+    assert at.selectbox(key="aif_hosp").options == ["Mayo Hospital"]

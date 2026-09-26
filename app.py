@@ -1,7 +1,5 @@
-# app.py
-"""LIFELINE v6.0 — Intelligent Blood Logistics Network (Pure Python / SQLite Edition)."""
-
-import html
+"""LIFELINE: sign-in. Everything else lives under pages/."""
+from __future__ import annotations
 
 import streamlit as st
 
@@ -10,14 +8,10 @@ from lifeline.auth.service import authenticate
 from lifeline.bootstrap import ensure_ready
 from lifeline.config import get_settings
 from lifeline.demo import DEMO_PASSWORD, DEMO_USERS
-from utils.styles import alert_banner, get_theme, inject_all_styles, render_ecg, render_login_sidebar
+from lifeline.ui import components as ui
+from lifeline.ui.layout import brand_mark, public_page
 
-st.set_page_config(
-    page_title="LIFELINE — Blood Logistics",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
+public_page("Sign in")
 ensure_ready()
 
 # Already signed in with a live session: go straight to the dashboard.
@@ -25,56 +19,35 @@ if session.current_user() is not None and not session.is_expired():
     st.switch_page("pages/1_dashboard.py")
     st.stop()
 
-render_login_sidebar()
-theme = get_theme()
-inject_all_styles(theme)
+_, centre, _ = st.columns([1, 1.6, 1])
+with centre:
+    ui.render(ui.Html(f'<div class="ll-login">{brand_mark(64)}<div class="ll-brand-name" style="margin-top:12px">LIFE<b>LINE</b></div>'
+                      "<p>Intelligent blood logistics · Lahore</p></div>"))
+    if flash := st.session_state.pop("_flash", None):
+        ui.alert_banner(flash, "warning", title="Signed out")
 
-_, col, _ = st.columns([1, 1.6, 1])
-with col:
-    st.markdown("""
-    <div class="login-shell">
-        <div class="login-wordmark">LIFE<span>LINE</span></div>
-        <div class="login-submark">Intelligent Blood Logistics Network · Lahore</div>
-    </div>""", unsafe_allow_html=True)
-
-    render_ecg()
-
-    flash = st.session_state.pop("_flash", None)
-    if flash:
-        alert_banner(flash, "warning")
-
-    with st.form("login_form", clear_on_submit=False):
-        st.markdown("<h4 style='color:var(--text-primary);'>Sign In</h4>", unsafe_allow_html=True)
-        email = st.text_input("Email address", placeholder="Email address", label_visibility="collapsed")
-        password = st.text_input("Password", placeholder="Password", type="password", label_visibility="collapsed")
-
-        col_btn, col_theme = st.columns([3, 1])
-        with col_btn:
-            submitted = st.form_submit_button("→ Access LIFELINE", use_container_width=True)
-        with col_theme:
-            if st.form_submit_button("Light" if theme == "dark" else "Dark", use_container_width=True):
-                st.session_state["theme"] = "light" if theme == "dark" else "dark"
-                st.rerun()
+    with st.form("login_form"):
+        email = st.text_input("Email address", key="li_email", autocomplete="username")
+        password = st.text_input("Password", type="password", key="li_password", autocomplete="current-password")
+        submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
 
     if submitted:
-        result = authenticate(email, password)
-        if result.ok and result.user is not None:
-            session.login(result.user)
-            st.switch_page("pages/1_dashboard.py")
-            st.stop()
-        alert_banner(result.error or "Access Denied — Invalid credentials.", "danger")
+        if not email.strip() or not password:
+            ui.alert_banner("Enter your email and password.", "danger", title="Sign in")
+        else:
+            result = authenticate(email, password)
+            if result.ok and result.user is not None:
+                session.login(result.user)
+                st.switch_page("pages/1_dashboard.py")
+                st.stop()
+            ui.alert_banner(result.error or "The email or password is not correct.", "danger", title="Sign in failed")
+
+    dark = st.session_state.get("theme") != "light"
+    if st.button("Switch to light theme" if dark else "Switch to dark theme", key="li_theme", type="tertiary"):
+        st.session_state["theme"] = "light" if dark else "dark"
+        st.rerun()
 
     if get_settings().app_env == "demo":
-        rows = "".join(
-            f"<tr><td>{html.escape(u.email)}</td><td>{html.escape(u.role.label)}</td>"
-            f"<td>{html.escape(u.hospital)}</td></tr>"
-            for u in DEMO_USERS
-        )
-        st.markdown(
-            f"""<div style="margin-top:16px;opacity:0.85;font-size:0.72rem;text-align:center">
-<table class="lifeline-table" style="font-size:0.68rem">
-<tr><th>EMAIL</th><th>ROLE</th><th>HOSPITAL</th></tr>{rows}</table>
-<p style="color:var(--text-secondary);font-size:0.65rem;text-align:center;margin-top:8px;">
-Demo mode — all accounts use password <code>{html.escape(DEMO_PASSWORD)}</code></p></div>""",
-            unsafe_allow_html=True,
-        )
+        ui.alert_banner(f"Demo mode. Every account below uses the password {DEMO_PASSWORD}.", "info", title="Demo accounts")
+        ui.render(ui.html_table([{"email": u.email, "role": u.role.label, "hospital": u.hospital} for u in DEMO_USERS],
+                                [ui.Col("Email", "email"), ui.Col("Role", "role"), ui.Col("Hospital", "hospital")]))

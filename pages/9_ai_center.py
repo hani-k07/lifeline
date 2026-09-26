@@ -1,310 +1,186 @@
-# pages/9_ai_center.py
-"""AI Intelligence Hub — LIFELINE v6.0"""
+"""AI Center: advisory AI on top of the deterministic engine. Every answer is labelled, PII never leaves the app."""
 from __future__ import annotations
 
-import html
-
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-
-st.set_page_config(page_title="AI Center — LIFELINE", layout="wide")
-
-from utils.styles import (
-    inject_all_styles, get_theme, section_header, alert_banner,
-    blood_badge, status_pill, styled_table, metric_card, render_ai_response,
-)
-from lifeline.auth.rbac import require_page
-from lifeline.privacy import scrub_rows, scrub_text
-from utils.sidebar import render_sidebar
-from utils.database import (
-    get_all_hospitals, get_blood_units, get_blood_requests,
-    get_transfusions, get_audit_logs, get_inventory_events, get_daily_usage, log_ai_usage, get_person_names,
-)
-from ai_engine import (
-    ai_demand_forecast, ai_emergency_triage,
-    ai_chatbot, ai_anomaly_detection, ai_exchange_advisor,
-)
 import dataclasses
 
+import streamlit as st
+
+from ai_engine import (
+    ai_anomaly_detection,
+    ai_chatbot,
+    ai_demand_forecast,
+    ai_emergency_triage,
+    ai_exchange_advisor,
+    is_error,
+)
+from lifeline.auth.roles import Role
+from lifeline.config import get_settings
 from lifeline.constants import BLOOD_GROUPS
 from lifeline.engine.forecasting import shortage_risk, wma_forecast
 from lifeline.engine.routing import find_sources
-from utils.database import get_stock_by_hospital
+from lifeline.engine.triage import triage_order
+from lifeline.privacy import scrub_rows, scrub_text
+from lifeline.ui import charts
+from lifeline.ui import components as ui
+from lifeline.ui.layout import guard, page
+from utils.database import (
+    get_all_hospitals,
+    get_audit_logs,
+    get_blood_requests,
+    get_blood_summary,
+    get_daily_usage,
+    get_inventory_events,
+    get_person_names,
+    get_stock_by_hospital,
+    get_transfusions,
+    log_ai_usage,
+)
 from utils.network import get_road_graph
 
-require_page(__file__)
+user = page(__file__, "AI Center", "Advisory AI on top of the deterministic engine")
 
-inject_all_styles(get_theme())
-render_sidebar()
 
-_role = st.session_state.get("user_role", "")
-_hosp_id = st.session_state.get("user_hospital_id")
-_uid = int(st.session_state.get("user_id", 0))
+def _show(feature: str, summary: str, text: str, hospital_id: int | None) -> None:
+    """A failed call is a warning, never an answer. A real answer is labelled advisory and logged."""
+    if is_error(text):
+        ui.alert_banner(text, "warning", title="AI unavailable")
+        return
+    log_ai_usage(feature, summary, text, hospital_id, user.id)
+    ui.ai_panel(text)
 
-# ── Title Block ──
-st.markdown("""
-<div style="margin-bottom:24px">
-    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">AI Intelligence Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
-        Advanced predictions, logistics advisor, and anomaly scanner
-    </p>
-</div>""", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Demand Forecast",
-    "Emergency Triage",
-    "Chatbot",
-    "Anomaly Detection",
-    "Exchange Advisor",
-])
-
-# ── TAB 1: DEMAND FORECAST ──
-with tab1:
-    section_header("AI-Enhanced Blood Demand Forecasting", "OpenRouter LLM Analysis")
+with guard():
+    enabled = get_settings().ai_enabled
+    if not enabled:
+        ui.alert_banner("No API key is configured, so the AI features are switched off. Everything else in LIFELINE works without it. "
+                        "Set OPENROUTER_API_KEY in the .env file to enable them.", "info", title="AI is off")
+    ui.alert_banner("AI output is advisory. The deterministic engine result is what the system acts on; a clinician decides.", "info",
+                    title="How to read this page")
 
     hospitals = get_all_hospitals()
-    if _hosp_id:
-        hosp_options = {h["name"]: h["id"] for h in hospitals if h["id"] == _hosp_id}
+    if user.role is Role.SUPER_ADMIN:
+        allowed = {h["name"]: h["id"] for h in hospitals}
     else:
-        hosp_options = {h["name"]: h["id"] for h in hospitals}
+        allowed = {h["name"]: h["id"] for h in hospitals if h["id"] == user.hospital_id}
+    scope = None if user.role is Role.SUPER_ADMIN else user.hospital_id
 
-    col1, col2 = st.columns(2)
-    with col1:
-        selected_hosp_name = st.selectbox("Hospital", list(hosp_options.keys()))
-    with col2:
-        blood_group = st.selectbox("Blood Group", BLOOD_GROUPS)
+    tab_forecast, tab_triage, tab_chat, tab_anomaly, tab_exchange = st.tabs(
+        ["Demand forecast", "Emergency triage", "Assistant", "Anomaly scan", "Exchange advisor"])
 
-    selected_hosp_id = hosp_options[selected_hosp_name]
-    inventory = get_blood_units(selected_hosp_id)
-    current_stock = sum(u["units"] for u in inventory if u["blood_group"] == blood_group)
+    with tab_forecast:
+        c1, c2 = st.columns(2)
+        hospital_name = c1.selectbox("Hospital", list(allowed), key="aif_hosp")
+        group = c2.selectbox("Blood group", BLOOD_GROUPS, key="aif_group")
+        hospital_id = allowed[hospital_name]
+        stock = get_blood_summary(hospital_id).get(group, 0)
+        history = get_daily_usage(hospital_id, group, 14)
+        forecast = wma_forecast(history, horizon=7, window=7)
+        risk = shortage_risk(stock, forecast)
+        ui.kpi_row(ui.kpi_card("In stock", f"{stock} units"), ui.kpi_card("Forecast use", f"{sum(forecast) / 7:.1f} / day"),
+                   ui.kpi_card("Risk", risk.risk_level, tone="danger" if risk.risk_level in ("CRITICAL", "HIGH") else "neutral",
+                               hint="stock-out beyond 7 days" if risk.days_until_stockout is None else f"stock-out in {risk.days_until_stockout} day(s)"))
+        charts.show(charts.usage_forecast(history, forecast, "", height=240))
+        if st.button("Get AI analysis", key="ai_forecast", disabled=not enabled):
+            summary = {"risk_level": risk.risk_level, "recommended_reorder": risk.recommended_reorder,
+                       "days_until_stockout": risk.days_until_stockout if risk.days_until_stockout is not None else "more than 7"}
+            with st.spinner("Analysing demand patterns…"):
+                _show("demand_forecast", f"{hospital_name}|{group}",
+                      ai_demand_forecast(hospital_name, group, stock, history, forecast, summary), hospital_id)
 
-    alert_banner(f"Current Stock: {current_stock} units of {blood_group} at {selected_hosp_name}", "info")
+    with tab_triage:
+        pending = [r for r in get_blood_requests(scope) if r["status"] == "PENDING"]
+        if not pending:
+            ui.empty_state("Nothing to triage", "There are no pending emergency requests.", icon="✓")
+        else:
+            ordered = triage_order(pending)
+            ui.section_header("Engine priority", "urgency first, then how long the request has waited; this is the order the system uses")
+            rows = [{**r, "ref": f"Patient {i}"} for i, r in enumerate(ordered, start=1)]
+            ui.data_table(rows, [ui.Col("Ref", "ref"), ui.Col("Patient", "patient_name"),
+                                 ui.Col("Group", "blood_group", render=lambda v, r: ui.blood_group_badge(v)),
+                                 ui.Col("Units", "units_needed", align="right"),
+                                 ui.Col("Urgency", "urgency", render=lambda v, r: ui.status_pill(v)), ui.Col("Condition", "patient_condition")],
+                          key="ai_triage_tbl", page_size=8)
+            st.caption("The AI is sent the 'Ref' (Patient N), the group, units, urgency and a scrubbed condition: never a name.")
+            if st.button("AI triage analysis", key="ai_triage", disabled=not enabled):
+                names = get_person_names()
+                patients = [{"patient": r["ref"], "blood_group": r["blood_group"], "units_needed": r["units_needed"],
+                             "urgency": r.get("urgency", "ROUTINE"),
+                             "condition": scrub_text(r.get("patient_condition") or "Not specified", names)} for r in rows[:10]]
+                with st.spinner("Prioritising the queue…"):
+                    _show("emergency_triage", f"{len(patients)} patients", ai_emergency_triage(patients, get_blood_summary(scope)), scope)
 
-    historical = get_daily_usage(selected_hosp_id, blood_group, 14)      # real usage from the event ledger
-    forecast = wma_forecast(historical, horizon=7, window=7)
-    risk_result = shortage_risk(current_stock, forecast)
-    # For the prompt: "None" means the stock outlasts the 7-day forecast.
-    risk = {"risk_level": risk_result.risk_level, "recommended_reorder": risk_result.recommended_reorder,
-            "days_until_stockout": risk_result.days_until_stockout if risk_result.days_until_stockout is not None else "more than 7"}
+    with tab_chat:
+        history_key = "chat_history"
+        st.session_state.setdefault(history_key, [])
+        chat = st.session_state[history_key]
+        if not chat:
+            ui.chat_bubble("ai", "Hello. Ask me about stock, ABO/Rh compatibility, storage or logistics. I cannot see patient records.")
+        for message in chat:
+            ui.chat_bubble(message["role"], message["content"])
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(metric_card("7-Day Avg Forecast", f"{sum(forecast)/7:.1f} u/day", icon="Forecast", variant="default"), unsafe_allow_html=True)
-    with c2:
-        st.markdown(metric_card("Days Until Stockout", f"{risk['days_until_stockout']}", icon="Stockout", variant="critical" if risk_result.risk_level == "CRITICAL" else "default"), unsafe_allow_html=True)
-    with c3:
-        st.markdown(metric_card("Risk Level", risk["risk_level"], icon="Risk", variant="critical" if risk["risk_level"] in ("CRITICAL", "HIGH") else "default"), unsafe_allow_html=True)
-
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-
-    if st.button("Get AI Analysis", key="forecast_ai", use_container_width=True):
-        with st.spinner("AI analysing demand patterns..."):
-            response = ai_demand_forecast(
-                selected_hosp_name, blood_group, current_stock,
-                historical, forecast, risk
-            )
-            log_ai_usage("demand_forecast", f"{selected_hosp_name}|{blood_group}", response, selected_hosp_id, _uid)
-            render_ai_response(response)
-
-# ── TAB 2: EMERGENCY TRIAGE ──
-with tab2:
-    section_header("AI Emergency Triage Prioritization", "Optimizing pending queues using medical clinical guidelines")
-    requests = get_blood_requests(_hosp_id)
-    pending = [r for r in requests if r.get("status") == "PENDING"]
-
-    if not pending:
-        alert_banner("No pending emergency requests in the queue.", "success")
-    else:
-        req_rows = []
-        for i, r in enumerate(pending, start=1):
-            req_rows.append({
-                "Ref": f"Patient {i}",
-                "Patient": r.get("patient_name", "—"),
-                "Blood Group": blood_badge(r.get("blood_group", "?")),
-                "Units Needed": f"{r.get('units_needed', 0)}u",
-                "Urgency": status_pill(r.get("urgency", "ROUTINE")),
-                "Condition": r.get("patient_condition", "—")
-            })
-        df_req = pd.DataFrame(req_rows)
-        styled_table(df_req)
-
-        inventory_all = get_blood_units(_hosp_id)
-        stock_summary: dict[str, int] = {}
-        for u in inventory_all:
-            stock_summary[u["blood_group"]] = stock_summary.get(u["blood_group"], 0) + u["units"]
-
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-
-        if st.button("AI Triage Analysis", key="triage_ai", use_container_width=True):
-            known_names = get_person_names()
-            # Patients go to the LLM as "Patient N" (N matches the Ref column above), never by name.
-            patient_list = [
-                {
-                    "patient": f"Patient {i}",
-                    "blood_group": r["blood_group"],
-                    "units_needed": r["units_needed"],
-                    "urgency": r.get("urgency", "ROUTINE"),
-                    "condition": scrub_text(r.get("patient_condition") or "Not specified", known_names),
-                }
-                for i, r in enumerate(pending[:10], start=1)
-            ]
-            with st.spinner("AI prioritising emergency queue..."):
-                response = ai_emergency_triage(patient_list, stock_summary)
-                log_ai_usage("emergency_triage", f"{len(patient_list)} patients", response, _hosp_id, _uid)
-                render_ai_response(response)
-
-# ── TAB 3: CHATBOT ──
-with tab3:
-    section_header("LIFELINE Assistant", "Real-time query agent for inventory and clinical protocols")
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    inventory = get_blood_units(_hosp_id)
-    inv_summary: dict[str, int] = {}
-    for u in inventory:
-        inv_summary[u["blood_group"]] = inv_summary.get(u["blood_group"], 0) + u["units"]
-
-    context = {
-        "hospital_name": st.session_state.get("user_hospital_name", "LIFELINE Network"),
-        "inventory": inv_summary,
-        "alerts": "None currently",
-    }
-
-    # ── Chat history display ──
-    chat_container = st.container()
-    with chat_container:
-        if not st.session_state.chat_history:
-            st.markdown("""
-            <div class='chat-bubble-ai'>
-                Hello! I am LIFELINE Assistant. Ask me about blood inventory,
-                compatibility rules, donors, or clinical protocols.
-            </div>
-            <div style='height:12px;'></div>""", unsafe_allow_html=True)
-        for msg in st.session_state.chat_history:
-            if msg["role"] == "user":
-                st.markdown(
-                    f"<div class='chat-bubble-user'>{html.escape(msg['content'])}</div>"
-                    "<div style='height:10px;'></div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f"<div class='chat-bubble-ai'>{html.escape(msg['content'])}</div>"
-                    "<div style='height:10px;'></div>",
-                    unsafe_allow_html=True,
-                )
-
-    # ── Handle pending AI reply (user sent message, AI hasn't replied yet) ──
-    if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "user":
-        latest_user_msg = st.session_state.chat_history[-1]["content"]
-        with st.spinner("Thinking..."):
+        if chat and chat[-1]["role"] == "user":            # a question is waiting for its answer
             names = get_person_names()
-            safe_question = scrub_text(latest_user_msg, names)      # patient/donor/staff names never leave the app
-            safe_history = [{**m, "content": scrub_text(m["content"], names)} for m in st.session_state.chat_history[:-1]]
-            reply = ai_chatbot(safe_question, context, safe_history)
-            st.session_state.chat_history.append({"role": "assistant", "content": reply})
-            log_ai_usage("chatbot", safe_question[:100], reply, _hosp_id, _uid)
+            question = scrub_text(chat[-1]["content"], names)          # names never leave the app
+            safe_history = [{**m, "content": scrub_text(m["content"], names)} for m in chat[:-1]]
+            context = {"hospital_name": user.hospital_name or "LIFELINE Network", "inventory": get_blood_summary(scope), "alerts": "None currently"}
+            with st.spinner("Thinking…"):
+                reply = ai_chatbot(question, context, safe_history)
+            if is_error(reply):
+                chat.pop()
+                st.session_state["chat_error"] = reply
+            else:
+                chat.append({"role": "assistant", "content": reply})
+                log_ai_usage("chatbot", question[:100], reply, scope, user.id)
+            st.rerun()
+        if error := st.session_state.pop("chat_error", None):
+            ui.alert_banner(error, "warning", title="AI unavailable")
+
+        with st.form("chat_form", clear_on_submit=True):
+            c_msg, c_send, c_clear = st.columns([6, 1, 1])
+            text = c_msg.text_input("Message", placeholder="Ask about stock, compatibility, storage…", label_visibility="collapsed",
+                                    disabled=not enabled)
+            send = c_send.form_submit_button("Send", disabled=not enabled)
+            clear = c_clear.form_submit_button("Clear")
+        if send and text.strip():
+            chat.append({"role": "user", "content": text.strip()})
+            st.rerun()
+        elif clear:
+            chat.clear()
             st.rerun()
 
-    # ── Input form (works reliably inside tabs, unlike st.chat_input) ──
-    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-    with st.form("chat_input_form", clear_on_submit=True):
-        col_msg, col_btn, col_clr = st.columns([6, 1, 1])
-        with col_msg:
-            user_message = st.text_input(
-                "Message",
-                placeholder="Ask about blood inventory, compatibility, donors, protocols...",
-                label_visibility="collapsed",
-            )
-        with col_btn:
-            send = st.form_submit_button("Send", use_container_width=True)
-        with col_clr:
-            clear = st.form_submit_button("Clear", use_container_width=True)
-
-    if send and user_message.strip():
-        st.session_state.chat_history.append({"role": "user", "content": user_message.strip()})
-        st.rerun()
-    elif clear:
-        st.session_state.chat_history = []
-        st.rerun()
-
-# ── TAB 4: ANOMALY DETECTION ──
-with tab4:
-    section_header("Anomaly Detection", "AI audit-trail and transfusion reaction pattern scanner")
-
-    if st.button("Run Anomaly Scan", key="anomaly_ai", use_container_width=True):
-        with st.spinner("Scanning logs for anomalies..."):
+    with tab_anomaly:
+        ui.section_header("Anomaly scan", "the AI reads a scrubbed copy of recent transfusions, audit entries and stock movements")
+        if st.button("Run anomaly scan", key="ai_anomaly", disabled=not enabled):
             names = get_person_names()
-            transfusions = scrub_rows(
-                get_transfusions(_hosp_id),
-                keep=("id", "hospital_name", "blood_group", "units", "transfused_at"),
-                text_fields=("notes",), names=names,
-            )
-            audit = scrub_rows(
-                get_audit_logs(50), keep=("action_type", "timestamp", "user_id"),
-                text_fields=("description",), names=names,
-            )
-            inv_changes = scrub_rows(
-                get_inventory_events(_hosp_id, 30),
-                keep=("hospital_id", "blood_group", "event_type", "at", "actor_id"),
-                text_fields=("note",), names=names,
-            )
-            response = ai_anomaly_detection(transfusions, audit, inv_changes)
-            log_ai_usage("anomaly_detection", "log_scan", response, _hosp_id, _uid)
-            render_ai_response(response)
+            transfusions = scrub_rows(get_transfusions(scope), keep=("id", "hospital_name", "blood_group", "units", "transfused_at"),
+                                      text_fields=("notes",), names=names)
+            audit = scrub_rows(get_audit_logs(50), keep=("action_type", "timestamp", "user_id"), text_fields=("description",), names=names)
+            events = scrub_rows(get_inventory_events(scope, 30), keep=("hospital_id", "blood_group", "event_type", "at", "actor_id"),
+                                text_fields=("note",), names=names)
+            with st.spinner("Scanning the logs…"):
+                _show("anomaly_detection", "log_scan", ai_anomaly_detection(transfusions, audit, events), scope)
 
-# ── TAB 5: EXCHANGE ADVISOR ──
-with tab5:
-    section_header("Smart Exchange Advisor", "Intelligent coordination recommendations")
-    hospitals = get_all_hospitals()
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        hosp_names = [h["name"] for h in hospitals]
-        req_hosp_name = st.selectbox("Requesting Hospital", hosp_names, key="ex_hosp")
-    with col2:
-        blood_grp = st.selectbox("Blood Group Needed", BLOOD_GROUPS, key="ex_bg")
-    with col3:
-        units_req = st.number_input("Units Required", min_value=1, max_value=50, value=5)
-
-    if st.button("Find Best Exchange", key="exchange_ai", use_container_width=True):
-        req_hosp = next((h for h in hospitals if h["name"] == req_hosp_name), None)
-        if req_hosp:
-            graph = get_road_graph(hospitals)
-            nearest = [{**dataclasses.asdict(o), "route": [graph.nodes[n].name for n in o.path]}
-                       for o in find_sources(graph, req_hosp["id"], blood_grp, get_stock_by_hospital(), include_source=False)]
-
-            if nearest:
-                st.markdown("<div style='font-size:0.9rem;font-weight:600;margin-bottom:8px;'>Road-network results (exact group first, then compatible groups):</div>", unsafe_allow_html=True)
-                dsa_rows = []
-                for r in nearest[:5]:
-                    dsa_rows.append({
-                        "Hospital": r["hospital_name"],
-                        "Sends": r["unit_group"] + (" (exact)" if r["exact"] else " (compatible)"),
-                        "Distance": f"{r['distance_km']} km",
-                        "Available Stock": f"{r['units_available']} units"
-                    })
-                df_dsa = pd.DataFrame(dsa_rows)
-                styled_table(df_dsa)
-
-                st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-
-                with st.spinner("AI optimising exchange strategy..."):
-                    routes = [
-                        {
-                            "hospital": r["hospital_name"],
-                            "distance_km": r["distance_km"],
-                            "path": r["route"],
-                            "blood_group_sent": r["unit_group"],
-                        }
-                        for r in nearest[:3]
-                    ]
-                    donors_for_ai = [{k: v for k, v in r.items() if k not in ("path", "route")} for r in nearest[:5]]
-                    response = ai_exchange_advisor(req_hosp_name, blood_grp, units_req, donors_for_ai, routes)
-                    log_ai_usage("exchange_advisor", f"{req_hosp_name}|{blood_grp}|{units_req}u", response, req_hosp["id"], _uid)
-                    render_ai_response(response)
-            else:
-                alert_banner(f"No hospitals found with available {blood_grp} stock.", "warning")
-
+    with tab_exchange:
+        c1, c2, c3 = st.columns(3)
+        requester_name = c1.selectbox("Requesting hospital", list(allowed), key="aix_hosp")
+        group_x = c2.selectbox("Blood group needed", BLOOD_GROUPS, key="aix_group")
+        units_x = c3.number_input("Units required", min_value=1, max_value=50, value=5, key="aix_units")
+        requester_id = allowed[requester_name]
+        graph = get_road_graph(hospitals)
+        nearest = [{**dataclasses.asdict(o), "route": [graph.nodes[n].name for n in o.path]}
+                   for o in find_sources(graph, requester_id, group_x, get_stock_by_hospital(), include_source=False)]
+        if not nearest:
+            ui.empty_state("No supplier found", f"No other hospital holds blood a {group_x} patient can receive.", icon="!")
+        else:
+            ui.section_header("Road-network result", "exact group first, then compatible groups; this is what the system would use")
+            ui.data_table(nearest[:5], [ui.Col("Hospital", "hospital_name"), ui.Col("Sends", "unit_group", render=lambda v, r: ui.blood_group_badge(v)),
+                                        ui.Col("Match", "exact", render=lambda v, r: ui.status_pill("exact" if v else "compatible", kind="success" if v else "info")),
+                                        ui.Col("In stock", "units_available", align="right"), ui.Col("Distance (km)", "distance_km", align="right")],
+                          key="aix_tbl", page_size=5)
+            if st.button("Ask the AI for a strategy", key="ai_exchange", disabled=not enabled):
+                routes = [{"hospital": r["hospital_name"], "distance_km": r["distance_km"], "path": r["route"], "blood_group_sent": r["unit_group"]}
+                          for r in nearest[:3]]
+                options = [{k: v for k, v in r.items() if k not in ("path", "route")} for r in nearest[:5]]
+                with st.spinner("Optimising the exchange…"):
+                    _show("exchange_advisor", f"{requester_name}|{group_x}|{int(units_x)}u",
+                          ai_exchange_advisor(requester_name, group_x, int(units_x), options, routes), requester_id)
