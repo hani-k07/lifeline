@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = Field(default=15, ge=1, le=1440)
     bcrypt_rounds: int = Field(default=12, ge=4, le=15)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_file: Path = ROOT / "logs" / "lifeline.log"
 
     @model_validator(mode="after")
     def _backend_available(self) -> Settings:

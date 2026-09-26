@@ -8,8 +8,10 @@ import time
 import streamlit as st
 
 from lifeline.auth.service import upgrade_known_legacy_hashes
+from lifeline.config import get_settings
 from lifeline.db.migrate import DatabaseNotInitialised, ensure_schema
 from lifeline.demo import DEMO_PASSWORD
+from lifeline.logging_setup import configure_logging
 from lifeline.services import housekeeping
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,9 @@ _last_run = 0.0
 
 @st.cache_resource(show_spinner=False)
 def _startup() -> None:
+    configure_logging()
     ensure_schema()
+    logger.info("started env=%s ai=%s", get_settings().app_env, "on" if get_settings().ai_enabled else "off")
     # Demo accounts created before bcrypt carry a legacy SHA-256 hash of a publicly known password.
     upgrade_known_legacy_hashes([DEMO_PASSWORD])
 
@@ -33,7 +37,10 @@ def _housekeeping_if_due() -> None:
             return
         _last_run = time.monotonic()
     try:
-        housekeeping.run()
+        result = housekeeping.run()
+        if any((result.expired_units, result.breached_contracts, result.status_changes)):
+            logger.info("housekeeping expired=%s breached=%s status_changes=%s", result.expired_units, result.breached_contracts,
+                        result.status_changes)
     except Exception:       # never take a page down because a background sweep failed
         logger.exception("housekeeping failed")
 

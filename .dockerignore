@@ -1,0 +1,13 @@
+.git
+.github
+.claude
+.env
+*.db
+*.db.bak-*
+logs/
+build/
+tests/
+__pycache__/
+*.pyc
+.venv/
+venv/

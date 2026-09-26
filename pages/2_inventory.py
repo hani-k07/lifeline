@@ -101,7 +101,7 @@ with guard():
             unit, problem = None, "That unit belongs to another hospital."
         ui.field_error(problem)
         if ui.confirm_dialog("discard", "Discard unit", f"Discard unit {code.strip()}? It will be written off permanently.",
-                             confirm_label="Yes, discard", danger=True, disabled=unit is None or not why.strip()):
+                             confirm_label="Yes, discard", danger=True, disabled=unit is None or not why.strip()) and unit:
             ok, error, _ = attempt(discard_unit, user, unit["id"], why)
             if ok:
                 st.toast(f"Unit {code.strip()} discarded")

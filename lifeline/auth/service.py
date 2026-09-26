@@ -1,6 +1,7 @@
 """Authentication and user creation. Every attempt is audited; unknown and known emails look identical."""
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Iterable
@@ -12,6 +13,7 @@ from lifeline.auth.roles import Role, is_valid_role
 from lifeline.db.connection import connect
 from utils import database as db
 
+logger = logging.getLogger(__name__)
 GENERIC_ERROR = "Access Denied — Invalid credentials."
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
@@ -49,6 +51,7 @@ def authenticate(email: str, password: str, now: float | None = None) -> AuthRes
     if user is None or not verified:
         user_id = user["id"] if user else None
         lock = throttle.record_failure(key, now)
+        logger.warning("login failed user_id=%s locked=%s", user_id, bool(lock))
         db.add_audit_log("LOGIN_FAILED", f"Failed login for {key[:100]}", user_id)
         if lock:
             db.add_audit_log("LOGIN_LOCKED", f"Locked {key[:100]} for {lock // 60} min", user_id)
@@ -59,6 +62,7 @@ def authenticate(email: str, password: str, now: float | None = None) -> AuthRes
     if passwords.needs_rehash(user["password_hash"]) and (new_hash := passwords.upgraded_hash(password)):
         db.update_password_hash(user["id"], new_hash)
     db.add_audit_log("LOGIN", f"{key} logged in", user["id"])
+    logger.info("login ok user_id=%s role=%s", user["id"], user["role"])
     return AuthResult(True, user={k: v for k, v in user.items() if k != "password_hash"})
 
 

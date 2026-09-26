@@ -6,14 +6,14 @@ addopts = "-q -p no:cacheprovider"
 [tool.ruff]
 line-length = 130
 target-version = "py310"
-extend-exclude = ["build", "extras", "docs"]
+extend-exclude = ["build", "docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-# Legacy modules are brought under lint phase by phase; new code (lifeline/, tests/) must be clean.
-per-file-ignores = { "pages/*" = ["E402", "E501"], "app.py" = ["E402", "E501"], "lifeline/selftest.py" = ["E501"], "lifeline/engine/*" = ["E501"], "lifeline/ui/*" = ["E501"], "tests/*" = ["E501"] }   # rule tables: one rule per line
+# E501 is off where the code is a table (engine rules, UI markup, test fixtures, prompts) and reads better on one line.
+per-file-ignores = { "pages/*" = ["E402", "E501"], "app.py" = ["E402", "E501"], "lifeline/selftest.py" = ["E501"], "ai_engine.py" = ["E501"], "lifeline/engine/*" = ["E501"], "lifeline/ui/*" = ["E501"], "tests/*" = ["E501"] }   # rule tables: one rule per line
 
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true
-files = ["lifeline"]
+files = ["lifeline", "utils", "ai_engine.py", "app.py", "pages"]

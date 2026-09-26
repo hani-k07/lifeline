@@ -191,7 +191,7 @@ Rules:
 - Never fabricate inventory numbers — only use the context provided
 - Use Pakistan Standard Time and Pakistani hospital context"""
 
-    messages = []
+    messages: list[dict[str, str]] = []
     if chat_history:
         messages.extend({**m, "content": scrub_text(str(m.get("content", "")))} for m in chat_history[-6:])
     messages.append({"role": "user", "content": scrub_text(question)})
