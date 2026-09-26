@@ -1,146 +1,102 @@
-# LIFELINE — Intelligent Blood Logistics Network
+# 🩸 LIFELINE
 
-A blood bank system for a network of Lahore hospitals: track every unit of blood, find the nearest **compatible**
-supply in an emergency, lend and borrow between hospitals, screen donors, watch transfusions for reactions and see
-shortages coming before they happen.
+**Intelligent blood logistics for Lahore's hospital network.**
+Track every unit of blood, find the nearest *compatible* supply in an emergency, lend and borrow between hospitals,
+screen donors, watch transfusions for reactions, and see shortages before they happen.
 
-Streamlit + SQLite, pure Python (no numpy, no scikit-learn, no cloud database). AI features are optional.
+[![CI](https://github.com/hani-k07/lifeline/actions/workflows/ci.yml/badge.svg)](https://github.com/hani-k07/lifeline/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Streamlit](https://img.shields.io/badge/built%20with-Streamlit-ff4b4b)
+![SQLite](https://img.shields.io/badge/database-SQLite-003b57)
 
-> **Decision support, not a medical device.** The screening and reaction rules use *proposed* clinical thresholds
-> that a clinician has not yet approved — see [docs/CLINICAL_REFERENCE.md](docs/CLINICAL_REFERENCE.md). Do not use the
-> system on real patients or donors until a medical officer has reviewed them.
+> **Decision support, not a medical device.** The screening and reaction rules use *proposed* clinical thresholds that
+> no clinician has approved yet ([docs/CLINICAL_REFERENCE.md](docs/CLINICAL_REFERENCE.md)). Do not use LIFELINE on real
+> patients or donors until a medical officer has reviewed them.
+
+## Features
+
+- **Per-unit blood ledger** — every unit has its own status, expiry and history. A unit can never be issued twice.
+- **Emergency workflow** — a three-step flow that ranks compatible sources by road distance (exact group first, O− last)
+  and reserves the blood atomically: the request and every reservation are saved together or not at all.
+- **Hospital exchange and loans** — request, accept, complete; loans with return deadlines that flag themselves when overdue.
+- **Donor screening and transfusion monitoring** — every rule is evaluated and every reason shown; a missing measurement is never assumed normal.
+- **Forecasting and analytics** — demand forecast from real usage, shortage outlook, donor segments, road network map.
+- **Optional AI assistant** — advisory only, labelled as such, and never sent a patient name or ID.
+- **Secure by default** — bcrypt, login throttle, idle timeout, role checks on every page and every action, append-only audit log.
+- **Accessible UI** — dark and light themes that meet WCAG AA, colour-blind-safe blood-group badges, responsive down to tablet.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-python -m scripts.setup_db          # creates the database with demo data
+python -m scripts.setup_db        # creates the database with demo data
 streamlit run app.py
 ```
 
-Windows: double-click `run.bat`. With `make`: `make setup && make run`. With Docker: see [Deployment](#deployment).
+Then open <http://localhost:8501>. On Windows you can double-click `run.bat` instead.
 
-Open <http://localhost:8501>. To see the demo accounts on the login page, put `APP_ENV=demo` in `.env`
-(copy `.env.example` first). Fresh demo data at any time: `python -m scripts.setup_db --reset`.
+To show the demo accounts on the login page, copy `.env.example` to `.env` and set `APP_ENV=demo`.
 
-## What you can do
+### Demo accounts
 
-| Page | What it is for |
+Password for every account: `lifeline123` (shown only when `APP_ENV=demo`; never run a real deployment in demo mode).
+
+| Email | Role |
 |---|---|
-| **Dashboard** | Stock per blood group, open emergencies, units expiring in 72 h, loans due — on one screen |
-| **Inventory** | Stock, first-expired-first-out dispatch order, receive units, issue units, discard a unit |
-| **Emergency** | Three steps: patient and need → ranked compatible sources with the road route → confirm. The request and every reservation are saved together or not at all |
-| **Exchange** | Ask another hospital for blood; they accept, then the units move. Suggested transfers between shortages and surpluses |
-| **Screening** | Donor registry (CNIC shown masked), registration, and a screening test that reports *every* rule that fired |
-| **Contracts** | Loans between hospitals with a return deadline; overdue loans flag themselves |
-| **Transfusion** | Record a transfusion (ABO/Rh compatibility enforced) and check pre/post vitals for a reaction |
-| **Analytics** | Demand forecast, shortage outlook, donor segments, the hospital road network |
-| **AI Center** | Advisory AI on top of the engine: forecast commentary, triage, assistant, anomaly scan, exchange strategy |
-| **Admin** | Users, hospitals, the audit log, AI usage and a **system self-test** |
+| `admin@lifeline.com` | Super Admin — all hospitals |
+| `mayo@lifeline.com` | Hospital Admin — Mayo Hospital |
+| `mayo.worker@lifeline.com` | Staff — Mayo Hospital |
+
+Eleven accounts in total; see `lifeline/demo.py`.
 
 ## Roles
 
-| Role | Sees | Can do |
+| Role | Scope | Can do |
 |---|---|---|
-| **Super Admin** | Every hospital | Everything, including user management and the self-test |
-| **Hospital Admin** | Their own hospital (plus the network for routing) | Everything for their hospital: dispatch, cancel, lend, AI Center |
-| **Staff** | Their own hospital | Day-to-day work: receive/issue stock, record transfusions, screen donors, raise emergencies. Cannot dispatch, cancel, lend or open the AI Center or Admin |
+| **Super Admin** | Whole network | Everything, including users and the system self-test |
+| **Hospital Admin** | Own hospital | Everything for their hospital: dispatch, cancel, lend, AI Center |
+| **Staff** | Own hospital | Receive and issue stock, record transfusions, screen donors, raise emergencies |
 
-Access is checked on every page load and again inside every service call, and each denial is written to the audit log.
-
-## Demo accounts
-
-Shown on the login page only when `APP_ENV=demo`. Every demo account uses the password `lifeline123`.
-**Never run a real deployment in demo mode.**
-
-| Email | Role | Hospital |
-|---|---|---|
-| `admin@lifeline.com` | Super Admin | all |
-| `mayo@lifeline.com` | Hospital Admin | Mayo Hospital |
-| `services@lifeline.com` | Hospital Admin | Services Hospital |
-| `mayo.worker@lifeline.com` | Staff | Mayo Hospital |
-
-(There are 11 in total; the rest follow the same `<hospital>` / `<hospital>.worker` pattern — see `lifeline/demo.py`.)
-
-For a real deployment use `APP_ENV=prod`: the database is created with hospitals only, no demo users, and you create
-the first administrator with `python -m lifeline.auth.create_admin`.
-
-## Architecture in one picture
+## How it fits together
 
 ```mermaid
 flowchart TB
-    subgraph UI["Streamlit pages (pages/, app.py)"]
-        P[Dashboard · Inventory · Emergency · Exchange · Screening · Contracts · Transfusion · Analytics · AI Center · Admin]
-    end
-    DS["Design system (lifeline/ui)<br/>tokens · themes · components · charts · page shell"]
-    SV["Services (lifeline/services)<br/>validate · one transaction · audit"]
-    EN["Engine (lifeline/engine)<br/>pure functions, no I/O"]
-    AU["Auth (lifeline/auth)<br/>bcrypt · throttle · RBAC · session"]
-    RP["Repositories (lifeline/db/repositories)<br/>SQL only"]
-    DB[("SQLite<br/>per-unit ledger · state machine · append-only audit")]
-    AI["ai_engine.py<br/>OpenRouter (optional)"]
-    P --> DS
-    P --> SV
-    P --> EN
-    P --> AU
-    P -.scrubbed, advisory.-> AI
-    SV --> RP --> DB
+    P["Pages (Streamlit)"] --> UI["Design system"]
+    P --> AU["Auth · roles · RBAC"]
+    P --> SV["Services<br/>rules · one transaction · audit"]
+    P --> EN["Engine<br/>13 pure-Python algorithms"]
     SV --> EN
+    SV --> RP["Repositories (SQL only)"] --> DB[("SQLite")]
+    P -. "scrubbed, advisory" .-> AI["OpenRouter (optional)"]
 ```
 
-More detail: [ARCHITECTURE.md](ARCHITECTURE.md) (layers, data model, security) and [ALGORITHMS.md](ALGORITHMS.md)
-(the 13 engine operations with complexity and where each is used).
+Pages never write SQL, repositories never make decisions, the engine never touches I/O.
+Details: [ARCHITECTURE.md](ARCHITECTURE.md) · algorithms and complexity: [ALGORITHMS.md](ALGORITHMS.md) · history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Everything has a safe default.
+Copy `.env.example` to `.env`. Every setting has a safe default.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `APP_ENV` | `dev` | `dev`, `demo` (shows demo accounts) or `prod` |
+| `APP_ENV` | `dev` | `dev`, `demo` (shows demo accounts) or `prod` (no demo users) |
 | `DB_PATH` | `lifeline.db` | SQLite file |
-| `OPENROUTER_API_KEY` | empty | Enables the AI features. Without it the AI Center says so and everything else works |
+| `OPENROUTER_API_KEY` | *(empty)* | Turns on the AI features; everything else works without it |
 | `SESSION_TIMEOUT_MINUTES` | `30` | Idle sign-out |
-| `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Login throttle, per email (unknown emails too) |
-| `BCRYPT_ROUNDS` | `12` | Password hashing cost |
-| `LOG_LEVEL` / `LOG_FILE` | `INFO` / `logs/lifeline.log` | JSON-lines log, rotated; secrets and personal identifiers are redacted |
+| `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Login throttle |
+| `LOG_LEVEL` / `LOG_FILE` | `INFO` / `logs/lifeline.log` | Redacted JSON logs |
 
-## Working on it
+## Development
 
 ```bash
-make check         # ruff + mypy + pytest, exactly what CI runs
-make test          # tests only
-make lint          # ruff
-make types         # mypy
+make check      # ruff + mypy + pytest, exactly what CI runs
 ```
 
-Without `make`: `python -m ruff check .`, `python -m mypy`, `python -m pytest`.
+No `make`? Run `python -m ruff check .`, `python -m mypy` and `python -m pytest`.
 
-The suite has about 580 tests: unit, engine (including brute-force checks of all 64 ABO/Rh pairs and Dijkstra against
-Floyd–Warshall), a concurrency test (six threads racing for the same unit), and page-level tests that drive the real
-Streamlit widgets and assert on the database. `engine/` and `auth/` are held at 90 % coverage in CI (currently 99 %).
-Every page must render in under 1.5 s on the demo data (measured: 0.03–0.1 s).
-
-### Project layout
-
-```
-app.py                     sign-in page
-pages/                     the ten pages, each a thin layer over services and the design system
-lifeline/
-  config.py                typed settings (pydantic-settings), secrets never rendered
-  auth/                    passwords (bcrypt), throttle, roles, RBAC, session
-  db/                      schema.sql, numbered migrations, connection, repositories (SQL only)
-  services/                the business rules: validate, one transaction, audit
-  engine/                  the algorithms: pure Python, no I/O, one dispatcher
-  ui/                      design tokens, themes, components, charts, page shell
-  privacy.py               CNIC masking and the scrubber applied before anything is sent to the AI
-  selftest.py              the checks behind Admin → System self-test
-  logging_setup.py         redacted JSON logging
-scripts/                   setup_db.py (create / migrate / reset), seed_demo.py (deterministic demo data)
-tests/                     unit/ engine/ integration/ ui/
-docs/CLINICAL_REFERENCE.md every clinical cut-off, checked against the code by a test
-AUDIT.md                   the original audit and the status of every finding
-```
+About 580 tests cover the engine (all 64 ABO/Rh pairs, Dijkstra against Floyd–Warshall), a six-thread double-issue race,
+and every page through the real Streamlit widgets. `engine/` and `auth/` are held at 90 % coverage in CI. Every page
+must render in under 1.5 s.
 
 ## Deployment
 
@@ -150,22 +106,11 @@ docker run -p 8501:8501 -v lifeline-data:/data lifeline
 docker exec -it <container> python -m lifeline.auth.create_admin     # first administrator
 ```
 
-The container runs with `APP_ENV=prod` (no demo users) and keeps the database and logs in the `/data` volume. Add
-`-e APP_ENV=demo` to try it with demo data. The image has not been built in CI yet.
+The container runs with `APP_ENV=prod` and keeps the database and logs in the `/data` volume.
+*The Docker image has not been built in CI yet.*
 
-## Things that need a person
+## Before real use
 
-- **Rotate the OpenRouter key** in your local `.env`: the audit found it in plain text on disk (it was never committed to git).
-- **Clinical sign-off** of `docs/CLINICAL_REFERENCE.md`, including two deliberate changes: syphilis now *defers* a donor
-  (the old code said BLOCK while its message said "defer until treated") and blood thinners defer a donor.
-- Hospital coordinates and the ABO/Rh mix in the demo seed are approximations.
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| "Database not found" on start | `python -m scripts.setup_db` |
-| Demo accounts are not on the login page | Set `APP_ENV=demo` in `.env` and restart |
-| Dashboard shows everything expired | An old database: `python -m scripts.setup_db --reset` for fresh demo data |
-| AI Center says "AI is off" | Set `OPENROUTER_API_KEY` in `.env`; everything else works without it |
-| Locked out after failed logins | Wait `LOGIN_LOCKOUT_MINUTES` (the lock is stored in the database, so restarting does not clear it) |
+- Rotate any OpenRouter key that has been stored in a local `.env`.
+- Have a clinician review and sign off `docs/CLINICAL_REFERENCE.md`.
+- Hospital coordinates and the blood-group mix in the demo data are approximations.
