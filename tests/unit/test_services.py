@@ -395,3 +395,54 @@ def test_hospital_status_rule(counts, expected):
 def test_system_actor_can_act_anywhere():
     receive(SYSTEM, 3, "A+", 1)
     assert stock_of(3, "A+") == 1
+
+
+# ------------------------------------------------------------------ atomic emergency confirm (create + reserve + audit)
+
+def test_create_and_reserve_is_one_atomic_step():
+    receive(SERVICES, 2, "O-", 3)
+    receive(ADMIN, 3, "A+", 2)
+    request_id, codes = emergency.create_and_reserve(MAYO, 1, "A+", 4, "CRITICAL", "Patient", "trauma",
+                                                     [(3, "A+", 2), (2, "O-", 2)])
+    assert len(codes) == 4 and q("SELECT status FROM blood_requests WHERE id=?", request_id) == [("RESERVED",)]
+    assert stock_of(3, "A+", "reserved") == 2 and stock_of(2, "O-", "reserved") == 2
+    logged = actions()
+    assert logged.count("REQUEST_RESERVED") == 2 and "EMERGENCY_REQUEST" in logged
+    emergency.fulfil_request(MAYO, request_id)                                   # and it can be dispatched straight away
+    assert q("SELECT status FROM blood_requests WHERE id=?", request_id) == [("RESOLVED",)]
+
+
+@pytest.mark.parametrize(
+    ("units", "sources", "error"),
+    [
+        (5, [(2, "O-", 5)], InsufficientStock),            # only 3 O- exist: stock changed since the search
+        (2, [(2, "A+", 2)], InsufficientStock),            # the hospital holds none of that group
+        (2, [(2, "B+", 2)], IncompatibleBlood),            # B+ blood is not compatible with an A+ patient
+        (2, [(2, "O-", 1)], ValidationError),              # does not cover the 2 units needed
+        (2, [(2, "O-", 3)], ValidationError),              # covers more than needed
+    ],
+)
+def test_create_and_reserve_writes_nothing_when_any_step_fails(units, sources, error):
+    receive(SERVICES, 2, "O-", 3)
+    before = (q("SELECT COUNT(*) FROM blood_requests")[0][0], stock_of(2, "O-"), len(actions()))
+    with pytest.raises(error):
+        emergency.create_and_reserve(MAYO, 1, "A+", units, "URGENT", "P", "", sources)
+    assert (q("SELECT COUNT(*) FROM blood_requests")[0][0], stock_of(2, "O-"), len(actions())) == before
+
+
+def test_create_and_reserve_second_source_failure_rolls_back_the_first():
+    receive(SERVICES, 2, "O-", 2)                                                   # source 3 has nothing
+    with pytest.raises(InsufficientStock):
+        emergency.create_and_reserve(MAYO, 1, "A+", 4, "URGENT", "P", "", [(2, "O-", 2), (3, "A+", 2)])
+    assert stock_of(2, "O-") == 2 and stock_of(2, "O-", "reserved") == 0 and q("SELECT COUNT(*) FROM blood_requests") == [(0,)]
+
+
+def test_create_and_reserve_validation_and_authorisation():
+    with pytest.raises(NotAuthorized):
+        emergency.create_and_reserve(SERVICES, 1, "A+", 1, "URGENT", "P", "", [(2, "O-", 1)])
+    with pytest.raises(ValidationError):
+        emergency.create_and_reserve(MAYO, 1, "A+", 1, "URGENT", " ", "", [(2, "O-", 1)])
+    with pytest.raises(ValidationError):
+        emergency.create_and_reserve(MAYO, 1, "A+", 1, "whenever", "P", "", [(2, "O-", 1)])
+    with pytest.raises(ValidationError):
+        emergency.create_and_reserve(MAYO, 1, "A+", 1, "URGENT", "P", "", [])

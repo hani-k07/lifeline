@@ -63,6 +63,17 @@ def page(file: str, title: str, subtitle: str = "") -> session.CurrentUser:
     return user
 
 
+def public_page(title: str) -> None:
+    """Shell for pages that need no sign-in (the login page): config + theme, sidebar hidden."""
+    st.set_page_config(page_title=f"{title} — LIFELINE", page_icon=str(LOGO), layout="wide", initial_sidebar_state="collapsed")
+    theme.inject()
+    render("<style>section[data-testid='stSidebar'], [data-testid='stSidebarCollapsedControl'], [data-testid='stExpandSidebarButton'] {display:none !important}</style>")
+
+
+def brand_mark(width: int = 44) -> str:
+    return f'<img src="{_logo_data_uri()}" width="{width}" height="{width}" alt="LIFELINE blood drop logo">'
+
+
 @contextmanager
 def guard() -> Iterator[None]:
     """Wrap a page body: an unexpected error becomes a friendly message with a reference id (the traceback goes to the log,

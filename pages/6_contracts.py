@@ -1,129 +1,85 @@
-# pages/6_contracts.py
-"""Blood Loans (lend / borrow contracts) — LIFELINE v6.0"""
+"""Loans: units lent between hospitals with a return deadline; overdue loans are flagged automatically."""
 from __future__ import annotations
 
 from datetime import timedelta
 
-import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Contracts — LIFELINE", layout="wide")
-
+from lifeline import clock
+from lifeline.auth.roles import Role
 from lifeline.constants import BLOOD_GROUPS
 from lifeline.engine.sorting import merge_sort
-from lifeline import clock
-from lifeline.auth.rbac import require_page
-from lifeline.auth.roles import Role
 from lifeline.services.contracts import create_loan, return_loan
+from lifeline.ui import components as ui
+from lifeline.ui.layout import guard, page
 from utils.actions import attempt
 from utils.database import get_all_hospitals, get_contracts
 from utils.helpers import time_until
-from utils.sidebar import render_sidebar
-from utils.styles import (
-    alert_banner,
-    blood_badge,
-    get_theme,
-    inject_all_styles,
-    metric_card,
-    section_header,
-    status_pill,
-    styled_table,
-)
 
-user = require_page(__file__)
+user = page(__file__, "Loans", "Blood lent between hospitals, with a return deadline")
 
-inject_all_styles(get_theme())
-render_sidebar()
+with guard():
+    hospitals = get_all_hospitals()
+    names = {h["id"]: h["name"] for h in hospitals}
+    tab_loans, tab_new = st.tabs(["Loans", "New loan"])
 
-_role = st.session_state.get("user_role", "")
-_hosp_id = st.session_state.get("user_hospital_id")
-_uid = int(st.session_state.get("user_id", 0))
-_hosp_name = st.session_state.get("user_hospital_name", "")
-
-# ── Title Block ──
-st.markdown("""
-<div style="margin-bottom:24px">
-    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Blood Loans</h1>
-    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
-        Units lent between hospitals, with a return deadline. Overdue loans are flagged automatically.
-    </p>
-</div>""", unsafe_allow_html=True)
-
-hospitals = get_all_hospitals()
-names = {h["id"]: h["name"] for h in hospitals}
-tab1, tab2 = st.tabs(["Loans", "New Loan"])
-
-with tab1:
-    contracts = merge_sort(get_contracts(None if _role == Role.SUPER_ADMIN else _hosp_id), key=lambda c: c["return_deadline"])
-    if not contracts:
-        alert_banner("No loans yet. Create one in the 'New Loan' tab.", "info")
-    else:
+    with tab_loans:
+        contracts = merge_sort(get_contracts(None if user.role is Role.SUPER_ADMIN else user.hospital_id), key=lambda c: c["return_deadline"])
         active = [c for c in contracts if c["status"] == "ACTIVE"]
-        breached = [c for c in contracts if c["status"] == "BREACHED"]
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(metric_card("Total Loans", f"{len(contracts)}", icon="Loans", variant="default"), unsafe_allow_html=True)
-        with c2:
-            st.markdown(metric_card("Active", f"{len(active)}", icon="Active", variant="success"), unsafe_allow_html=True)
-        with c3:
-            st.markdown(metric_card("Overdue", f"{len(breached)}", icon="Breached",
-                                    variant="critical" if breached else "default"), unsafe_allow_html=True)
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-        if breached:
-            alert_banner(f"{len(breached)} loan(s) are past their return deadline.", "danger")
-
-        styled_table(pd.DataFrame([{
-            "Ticket": c["ticket_id"],
-            "Lender": c["lender_name"],
-            "Borrower": c["borrower_name"],
-            "Blood Group": blood_badge(c["blood_group"]),
-            "Units": f"{c['units']}u",
-            "Deadline": c["return_deadline"][:16].replace("T", " "),
-            "Time left": time_until(c["return_deadline"]) if c["status"] in ("ACTIVE", "BREACHED") else "—",
-            "Status": status_pill(c["status"]),
-        } for c in contracts]))
-
+        overdue = [c for c in contracts if c["status"] == "BREACHED"]
+        ui.kpi_row(ui.kpi_card("Loans", len(contracts)), ui.kpi_card("Active", len(active), tone="success"),
+                   ui.kpi_card("Overdue", len(overdue), tone="danger" if overdue else "neutral"))
+        if overdue:
+            ui.alert_banner(f"{len(overdue)} loan(s) are past their return deadline.", "danger", title="Overdue")
+        ui.data_table(
+            contracts,
+            [ui.Col("Ticket", "ticket_id"), ui.Col("Lender", "lender_name"), ui.Col("Borrower", "borrower_name"),
+             ui.Col("Group", "blood_group", render=lambda v, r: ui.blood_group_badge(v)), ui.Col("Units", "units", align="right"),
+             ui.Col("Deadline", "return_deadline", render=lambda v, r: str(v)[:16].replace("T", " ")),
+             ui.Col("Time left", "return_deadline", render=lambda v, r: time_until(v) if r["status"] in ("ACTIVE", "BREACHED") else "—",
+                    sortable=False, search=False),
+             ui.Col("Status", "status", render=lambda v, r: ui.status_pill(v))],
+            key="loan_tbl", empty_title="No loans yet", empty_body="Create one in the 'New loan' tab.")
         open_loans = [c for c in contracts if c["status"] in ("ACTIVE", "BREACHED")]
         if open_loans:
-            section_header("Settle a loan", "The borrower hands the same number of units of the same group back")
-            settle_error = None
+            ui.section_header("Settle a loan", "the borrower hands the same number of units of the same group back")
+            error = None
             for c in open_loans:
-                col_a, col_b = st.columns([4, 1])
-                col_a.markdown(f"{c['ticket_id']} · {c['units']}u {c['blood_group']} · {c['borrower_name']} → {c['lender_name']}"
-                               f" {status_pill(c['status'])}", unsafe_allow_html=True)
-                if col_b.button("Mark returned", key=f"ret_{c['id']}"):
-                    ok, settle_error, _ = attempt(return_loan, user, c["id"])
-                    if ok:
-                        st.toast(f"Loan {c['ticket_id']} settled")
-                        st.rerun()
-            if settle_error:
-                alert_banner(settle_error, "danger")
+                left, right = st.columns([4, 2])
+                left.markdown(f"{ui.esc(c['ticket_id'])} · {c['units']} × {ui.blood_group_badge(c['blood_group'])} · "
+                              f"{ui.esc(c['borrower_name'])} → {ui.esc(c['lender_name'])} {ui.status_pill(c['status'])}", unsafe_allow_html=True)
+                with right:
+                    if ui.confirm_dialog(f"ret_{c['id']}", "Mark returned",
+                                         f"Return {c['units']} × {c['blood_group']} from {c['borrower_name']} to {c['lender_name']}?",
+                                         confirm_label="Yes, returned"):
+                        ok, error, _ = attempt(return_loan, user, c["id"])
+                        if ok:
+                            st.toast(f"Loan {c['ticket_id']} settled")
+                            st.rerun()
+            if error:
+                ui.alert_banner(error, "danger")
 
-with tab2:
-    if _role == Role.STAFF:
-        alert_banner("Staff cannot create loans. Contact your Hospital Admin.", "danger")
-    else:
-        section_header("Lend blood to another hospital")
-        loan_error = None
-        with st.form("loan_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                if _role == Role.SUPER_ADMIN:
-                    lender_id = next(h["id"] for h in hospitals if h["name"] == st.selectbox("Lending hospital", list(names.values())))
-                else:
-                    lender_id = _hosp_id
-                    st.text_input("Lending hospital", value=_hosp_name, disabled=True)
-                borrowers = {h["name"]: h["id"] for h in hospitals if h["id"] != lender_id}
-                borrower_id = borrowers[st.selectbox("Borrowing hospital", list(borrowers.keys()))]
-                blood_grp = st.selectbox("Blood Group", BLOOD_GROUPS)
-            with col2:
-                units = st.number_input("Units", min_value=1, max_value=100, value=2)
-                hours = st.number_input("Return within (hours)", min_value=1, max_value=24 * 30, value=72)
-            if st.form_submit_button("Create Loan", use_container_width=True):
-                ok, loan_error, _ = attempt(create_loan, user, lender_id, borrower_id, blood_grp, int(units),
-                                            clock.now() + timedelta(hours=int(hours)))
+    with tab_new:
+        if user.role is Role.STAFF:
+            ui.alert_banner("Staff cannot create loans. Ask your hospital administrator.", "warning", title="Not allowed")
+        else:
+            ui.section_header("Lend blood to another hospital")
+            if user.role is Role.SUPER_ADMIN:
+                by_name = {v: k for k, v in names.items()}
+                lender_id = by_name[st.selectbox("Lending hospital", list(by_name), key="loan_lender")]
+            else:
+                lender_id = user.hospital_id
+                st.text_input("Lending hospital", value=user.hospital_name, disabled=True)
+            borrowers = {v: k for k, v in names.items() if k != lender_id}
+            c1, c2, c3 = st.columns(3)
+            borrower_id = borrowers[c1.selectbox("Borrowing hospital", list(borrowers), key="loan_borrower")]
+            group = c2.selectbox("Blood group", BLOOD_GROUPS, key="loan_group")
+            units = c3.number_input("Units", min_value=1, max_value=100, value=2, step=1, key="loan_units")
+            hours = st.number_input("Return within (hours)", min_value=1, max_value=24 * 30, value=72, step=1, key="loan_hours")
+            if ui.confirm_dialog("loan_new", "Create loan", f"Lend {int(units)} × {group} to {names[borrower_id]}? The units move now.",
+                                 confirm_label="Yes, lend"):
+                ok, error, _ = attempt(create_loan, user, lender_id, borrower_id, group, int(units), clock.now() + timedelta(hours=int(hours)))
                 if ok:
-                    st.toast(f"{units} unit(s) of {blood_grp} lent to {names[borrower_id]}")
+                    st.toast(f"{int(units)} unit(s) of {group} lent to {names[borrower_id]}")
                     st.rerun()
-        if loan_error:
-            alert_banner(loan_error, "danger")
+                ui.alert_banner(error or "Could not create the loan.", "danger")

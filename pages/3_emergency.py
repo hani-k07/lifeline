@@ -1,210 +1,264 @@
-# pages/3_emergency.py
-"""Emergency Blood Requests — LIFELINE v6.0"""
+"""Emergency: a three-step flow. 1) who needs what  2) ranked, compatible sources + route  3) confirm."""
 from __future__ import annotations
 
 import dataclasses
-import html
+from typing import Any
 
-import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Emergency — LIFELINE", layout="wide")
-
+from lifeline.auth.roles import Role
+from lifeline.auth.session import CurrentUser
 from lifeline.constants import BLOOD_GROUPS
 from lifeline.engine.routing import backup_hospitals, find_sources
 from lifeline.engine.triage import triage_order
-from lifeline.auth.rbac import require_page
-from lifeline.auth.roles import Role
-from lifeline.services.emergency import cancel_request, create_request, fulfil_request, reserve_units
+from lifeline.services.emergency import cancel_request, create_and_reserve, fulfil_request
+from lifeline.ui import charts
+from lifeline.ui import components as ui
+from lifeline.ui.layout import guard, page
 from utils.actions import attempt
-from utils.database import get_all_hospitals, get_blood_requests, get_reserved_counts
-from utils.database import get_stock_by_hospital
+from utils.database import get_all_hospitals, get_blood_requests, get_reserved_counts, get_stock_by_hospital
 from utils.network import get_road_graph
-from utils.sidebar import render_sidebar
-from utils.styles import (
-    alert_banner,
-    blood_badge,
-    get_theme,
-    inject_all_styles,
-    section_header,
-    status_pill,
-    styled_table,
-)
 
-user = require_page(__file__)
+user = page(__file__, "Emergency", "Find safe blood fast, reserve it, then dispatch")
 
-inject_all_styles(get_theme())
-render_sidebar()
+FLOW = "em_flow"
+STEPS = ["Patient & need", "Sources & route", "Confirm"]
 
-_role = st.session_state.get("user_role", "")
-_hosp_id = st.session_state.get("user_hospital_id")
-_uid = int(st.session_state.get("user_id", 0))
-_hosp_name = st.session_state.get("user_hospital_name", "")
 
-# ── Title Block ──
-st.markdown("""
-<div style="margin-bottom:24px">
-    <h1 style="font-family:'Syne',sans-serif;font-size:1.6rem;margin:0">Emergency Requests</h1>
-    <p style="color:var(--text-secondary);font-size:0.82rem;margin:4px 0 0">
-        Submit and manage critical blood requests with DSA triage queue
-    </p>
-</div>""", unsafe_allow_html=True)
+def _flow() -> dict[str, Any]:
+    return st.session_state.setdefault(FLOW, {"step": 1})
 
-tab1, tab2, tab3 = st.tabs(["Active Queue", "New Request", "Find Blood"])
-_scope = None if _role == Role.SUPER_ADMIN else _hosp_id
-_can_manage = _role in (Role.SUPER_ADMIN, Role.HOSPITAL_ADMIN)
 
-# ── Tab 1: Queue ──
-with tab1:
-    requests = get_blood_requests(_scope)
-    active = [r for r in requests if r.get("status") in ("PENDING", "RESERVED")]
-    closed = [r for r in requests if r.get("status") in ("RESOLVED", "CANCELLED")]
-    reserved_counts = get_reserved_counts()
+def _plan(options: list[dict], chosen: list[int], units: int) -> list[dict]:
+    """Allocate `units` across the chosen options in ranked order (exact group first, then nearest)."""
+    plan, remaining = [], units
+    for i in sorted(chosen):
+        if remaining <= 0:
+            break
+        option = options[i]
+        take = min(remaining, option["units_available"])
+        plan.append({**option, "take": take})
+        remaining -= take
+    return plan
 
-    section_header("Active Queue", f"{len(active)} open requests")
-    queue_error = None
 
-    if not active:
-        alert_banner("No open emergency requests in the queue.", "success")
+def _suggested(options: list[dict], units: int) -> list[int]:
+    picked, remaining = [], units
+    for i, option in enumerate(options):
+        if remaining <= 0:
+            break
+        picked.append(i)
+        remaining -= option["units_available"]
+    return picked
+
+
+def _go(step: int) -> None:
+    """Button callback: move between steps without a half-rendered intermediate pass."""
+    st.session_state[FLOW]["step"] = step
+
+
+def _search(hospitals: list[dict], hospital_id: int, hospital_name: str) -> None:
+    """Button callback: validate step 1, run the search, move to step 2. The typed values are kept for 'Back'."""
+    ss = st.session_state
+    flow = ss[FLOW]
+    need = {"hospital_id": hospital_id, "hospital_name": hospital_name, "group": ss["em_group"], "units": int(ss["em_units"]),
+            "urgency": ss["em_urgency"], "patient": ss["em_patient"].strip(), "condition": ss["em_condition"].strip()}
+    flow["need"] = need
+    if not need["patient"]:
+        flow["errors"] = {"patient": "Enter the patient's name, or a reference if they are unidentified."}
+        return
+    graph = get_road_graph(hospitals)
+    flow.update(step=2, options=[{**dataclasses.asdict(o), "route": " → ".join(graph.nodes[n].name for n in o.path)}
+                                 for o in find_sources(graph, hospital_id, need["group"], get_stock_by_hospital())],
+                backups=backup_hospitals(graph, hospital_id))
+
+
+def _confirm(actor: CurrentUser) -> None:
+    """Button callback: create the request and reserve every planned unit in one transaction."""
+    flow = st.session_state[FLOW]
+    need = flow["need"]
+    sources = [(p["hospital_id"], p["unit_group"], p["take"]) for p in flow["plan"]]
+    ok, error, result = attempt(create_and_reserve, actor, need["hospital_id"], need["group"], need["units"], need["urgency"],
+                                need["patient"], need["condition"], sources)
+    if ok:
+        request_id, codes = result
+        flow.update(step=4, done={"request_id": request_id, "codes": codes})
+        st.toast(f"Request #{request_id} created; {len(codes)} unit(s) reserved")
     else:
-        for req in triage_order(active):
-            rid, need = req["id"], req["units_needed"]
-            have = reserved_counts.get(rid, 0)
-            with st.container():
-                c1, c2, c3, c4, c5 = st.columns([2, 1, 1.2, 1.5, 1.4])
-                pt = html.escape(str(req.get("patient_name") or "Unknown"))
-                cond = html.escape(str(req.get("patient_condition") or "N/A"))
-                ts = str(req.get("created_at", ""))[:16].replace("T", " ")
-                c1.markdown(f"<div style='font-size:0.9rem;font-weight:600;color:var(--text-primary)'>{pt}</div>"
-                            f"<div style='font-size:0.75rem;color:var(--text-secondary)'>{cond}</div>", unsafe_allow_html=True)
-                c2.markdown(status_pill(req.get("urgency", "ROUTINE")) + " " + status_pill(req["status"]), unsafe_allow_html=True)
-                c3.markdown(f"{blood_badge(req['blood_group'])} <span style='font-family:monospace;font-size:0.85rem'>"
-                            f"{have}/{need}u reserved</span>", unsafe_allow_html=True)
-                c4.markdown(f"<div style='font-size:0.75rem;color:var(--text-secondary)'>{html.escape(req.get('hospital_name', '—'))}"
-                            f"</div><div style='font-size:0.68rem;color:var(--text-secondary)'>{ts}</div>", unsafe_allow_html=True)
-                if _can_manage:
-                    with c5:
-                        if req["status"] == "RESERVED" and have == need and st.button("Dispatch", key=f"disp_{rid}"):
-                            ok, queue_error, _ = attempt(fulfil_request, user, rid)
-                            if ok:
-                                st.toast(f"Request {rid} dispatched")
-                                st.rerun()
-                        if st.button("Cancel", key=f"cancel_{rid}"):
-                            ok, queue_error, _ = attempt(cancel_request, user, rid, "cancelled from queue")
-                            if ok:
-                                st.toast(f"Request {rid} cancelled; reserved units returned to stock")
-                                st.rerun()
-                st.divider()
-    if queue_error:
-        alert_banner(queue_error, "danger")
+        flow["error"] = error
 
-    if closed:
-        with st.expander(f"Closed Requests ({len(closed)})"):
-            styled_table(pd.DataFrame([{
-                "Patient": r["patient_name"],
-                "Blood Group": blood_badge(r["blood_group"]),
-                "Units": r["units_needed"],
-                "Urgency": status_pill(r["urgency"]),
-                "Status": status_pill(r["status"]),
-                "Requested": r["created_at"][:16].replace("T", " ") if r.get("created_at") else "—",
-                "Closed": r["resolved_at"][:16].replace("T", " ") if r.get("resolved_at") else "—",
-            } for r in closed]))
 
-# ── Tab 2: New Request ──
-with tab2:
-    section_header("Submit Emergency Blood Request")
-    new_error = None
+def _restart() -> None:
+    st.session_state[FLOW] = {"step": 1}
 
-    with st.form("emergency_form"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            bg = st.selectbox("Blood Group Needed", BLOOD_GROUPS)
-        with col2:
-            units = st.number_input("Units Required", min_value=1, max_value=50, value=2)
-        with col3:
-            urgency = st.selectbox("Urgency Level", ["CRITICAL", "URGENT", "ROUTINE"])
 
-        patient_name = st.text_input("Patient Name")
-        condition = st.text_area("Patient Condition / Notes", placeholder="e.g. Trauma surgery, O- required")
+def _step_need(flow: dict[str, Any], hospitals: list[dict]) -> None:
+    errors = flow.pop("errors", {})
+    prior = flow.get("need", {})                      # what the user typed before pressing Back
+    if user.role is Role.SUPER_ADMIN:
+        names = {h["name"]: h["id"] for h in hospitals}
+        picked = st.selectbox("Requesting hospital", list(names), key="em_hosp",
+                              index=list(names).index(prior["hospital_name"]) if prior.get("hospital_name") in names else 0)
+        hospital_id, hospital_name = names[picked], picked
+    else:
+        hospital_id, hospital_name = user.hospital_id, user.hospital_name
+        st.text_input("Requesting hospital", value=hospital_name, disabled=True)
+    assert hospital_id is not None
+    urgencies = ["CRITICAL", "URGENT", "ROUTINE"]
+    c1, c2, c3 = st.columns(3)
+    c1.selectbox("Patient blood group", BLOOD_GROUPS, key="em_group", index=BLOOD_GROUPS.index(prior.get("group", BLOOD_GROUPS[0])))
+    c2.number_input("Units needed", min_value=1, max_value=20, value=prior.get("units", 2), step=1, key="em_units")
+    c3.radio("Urgency", urgencies, horizontal=True, key="em_urgency", index=urgencies.index(prior.get("urgency", "CRITICAL")))
+    st.text_input("Patient name or reference", key="em_patient", value=prior.get("patient", ""), help="Shown only to staff of this hospital.")
+    ui.field_error(errors.get("patient"))
+    st.text_area("Clinical notes (optional)", key="em_condition", value=prior.get("condition", ""), height=80,
+                 placeholder="e.g. road accident, haemorrhage, O- preferred")
+    st.button("Find blood sources", type="primary", key="em_find", on_click=_search, args=(hospitals, hospital_id, hospital_name))
 
-        if _role == Role.SUPER_ADMIN:
-            hosp_map = {h["name"]: h["id"] for h in get_all_hospitals()}
-            req_hosp_id = hosp_map[st.selectbox("Requesting Hospital", list(hosp_map.keys()))]
-        else:
-            req_hosp_id = _hosp_id
 
-        if st.form_submit_button("Submit Emergency Request", use_container_width=True):
-            ok, new_error, _ = attempt(create_request, user, req_hosp_id, bg, int(units), urgency, patient_name, condition)
-            if ok:
-                st.toast(f"{urgency} request submitted for {units} unit(s) of {bg}")
-                st.rerun()
-    if new_error:
-        alert_banner(new_error, "danger")
+def _step_sources(flow: dict[str, Any], hospitals: list[dict]) -> None:
+    need, options = flow["need"], flow["options"]
+    ui.alert_banner(f"{need['units']} unit(s) of {need['group']} for {need['hospital_name']} · {need['urgency']}", "info", title="Need")
+    if not options:
+        ui.empty_state("No compatible blood in the network", f"No hospital holds blood a {need['group']} patient can safely receive. "
+                       "Contact the regional blood bank.", icon="!")
+        st.button("← Change the request", key="em_back1", on_click=_go, args=(1,))
+        return
 
-# ── Tab 3: Find Blood (Dijkstra) + reserve ──
-with tab3:
-    section_header("Find Blood via Network Graph (Dijkstra)")
+    exact = sum(1 for o in options if o["exact"])
+    ui.alert_banner(f"{len(options)} source(s): {exact} with the exact group, {len(options) - exact} compatible substitute(s). "
+                    "Exact matches are ranked first; O- is kept for last.", "success", title="Found")
+    ui.data_table(
+        options,
+        [ui.Col("Hospital", "hospital_name"),
+         ui.Col("Sends", "unit_group", render=lambda v, r: ui.blood_group_badge(v)),
+         ui.Col("Match", "exact", render=lambda v, r: ui.status_pill("exact" if v else "compatible", kind="success" if v else "info")),
+         ui.Col("In stock", "units_available", align="right"),
+         ui.Col("Distance (km)", "distance_km", align="right"),
+         ui.Col("ETA (min)", "eta_min", align="right"),
+         ui.Col("Route", "route", sortable=False)],
+        key="em_opts", page_size=8)
+
+    labels = [f"{o['hospital_name']} · {o['unit_group']} · {o['units_available']} in stock · {o['distance_km']} km" for o in options]
+    default = [labels[i] for i in _suggested(options, need["units"])]
+    picked = st.multiselect("Sources to reserve from", labels, default=default, key="em_pick",
+                            help="Reserved in ranked order until the units needed are covered.")
+    plan = _plan(options, [labels.index(p) for p in picked], need["units"])
+    covered = sum(p["take"] for p in plan)
+    if covered >= need["units"]:
+        ui.alert_banner(f"The plan covers all {need['units']} unit(s).", "success", title="Plan")
+    else:
+        ui.alert_banner(f"The plan covers {covered} of {need['units']} unit(s). Add another source.", "warning", title="Plan")
+    if plan:
+        ui.render(ui.html_table(plan, [ui.Col("Reserve at", "hospital_name"), ui.Col("Group", "unit_group", render=lambda v, r: ui.blood_group_badge(v)),
+                                       ui.Col("Units", "take", align="right"), ui.Col("ETA (min)", "eta_min", align="right"),
+                                       ui.Col("Route", "route")]))
+        graph = get_road_graph(hospitals)
+        route = [(graph.nodes[n].lat, graph.nodes[n].lon) for n in plan[0]["path"]]
+        edges = [(graph.nodes[a].lat, graph.nodes[a].lon, graph.nodes[b].lat, graph.nodes[b].lon) for a, b, _ in graph.edges()]
+        charts.show(charts.route_map(hospitals, edges, route, height=340))
+        st.caption(f"Highlighted: fastest route from {plan[0]['hospital_name']} to {need['hospital_name']} "
+                   f"({plan[0]['distance_km']} km, about {int(round(plan[0]['eta_min']))} min).")
+    with st.expander("Backup hospitals (fewest road hops first)"):
+        ui.data_table(flow["backups"], [ui.Col("Hospital", "name"), ui.Col("Hops", "level", align="right"),
+                                        ui.Col("Distance (km)", "distance_km", align="right")], key="em_backup", page_size=6)
+
+    flow["plan"] = plan
+    b1, b2 = st.columns(2)
+    b1.button("← Back", key="em_back2", on_click=_go, args=(1,))
+    b2.button("Review and confirm →", type="primary", key="em_next", disabled=covered < need["units"], on_click=_go, args=(3,))
+
+
+def _step_confirm(flow: dict[str, Any]) -> None:
+    need, plan = flow["need"], flow["plan"]
+    ui.kpi_row(ui.kpi_card("Patient group", need["group"], hint=need["hospital_name"]),
+               ui.kpi_card("Units", need["units"], hint=f"from {len(plan)} source(s)"),
+               ui.kpi_card("Urgency", need["urgency"], tone="danger" if need["urgency"] == "CRITICAL" else "neutral"))
+    ui.section_header("This will")
+    ui.render(ui.html_table(plan, [ui.Col("Reserve at", "hospital_name"), ui.Col("Group", "unit_group", render=lambda v, r: ui.blood_group_badge(v)),
+                                   ui.Col("Units", "take", align="right"), ui.Col("ETA (min)", "eta_min", align="right")]))
+    st.markdown(f"- create an **{need['urgency']}** request for **{need['units']} × {need['group']}**\n"
+                f"- reserve the units above (earliest expiry first) so nobody else can take them\n"
+                f"- write the request and reservations to the audit trail")
+    if any(not p["exact"] for p in plan):
+        ui.alert_banner("Some units are a compatible substitute, not the patient's own group. Confirm ABO/Rh compatibility and the "
+                        "cross-match per your protocol before transfusion.", "warning", title="Check")
+    error = flow.pop("error", None)
+    if error:
+        ui.alert_banner(f"{error} Stock may have changed since the search: go back and search again. Nothing was saved.", "danger",
+                        title="Could not reserve")
+    b1, b2 = st.columns(2)
+    b1.button("← Back", key="em_back3", on_click=_go, args=(2,))
+    b2.button("Confirm and reserve", type="primary", key="em_confirm", on_click=_confirm, args=(user,))
+
+
+def _step_done(flow: dict[str, Any]) -> None:
+    done = flow["done"]
+    ui.alert_banner(f"Request #{done['request_id']} is open and {len(done['codes'])} unit(s) are reserved for it.", "success", title="Done")
+    st.write("Unit codes: " + ", ".join(done["codes"]))
+    st.caption("Dispatch the request from the 'Open requests' tab when the units leave.")
+    st.button("Start another emergency", type="primary", key="em_again", on_click=_restart)
+
+
+def _open_requests(can_manage: bool) -> None:
+    scope = None if user.role is Role.SUPER_ADMIN else user.hospital_id
+    active = [r for r in get_blood_requests(scope) if r["status"] in ("PENDING", "RESERVED")]
+    if not active:
+        ui.empty_state("No open emergencies", "New requests appear here in triage order.", icon="✓")
+        return
+    reserved = get_reserved_counts()
+    error = None
+    for req in triage_order(active):
+        rid, need = req["id"], req["units_needed"]
+        have = reserved.get(rid, 0)
+        c1, c2, c3 = st.columns([3, 3, 2])
+        c1.markdown(f"**{ui.esc(req.get('patient_name') or 'Unknown')}**  \n{ui.esc(req.get('patient_condition') or '')}")
+        c2.markdown(ui.status_pill(req["urgency"]) + " " + ui.status_pill(req["status"]) + " " + ui.blood_group_badge(req["blood_group"])
+                    + f"  {have}/{need} reserved · #{rid} · {ui.esc(req['hospital_name'])}", unsafe_allow_html=True)
+        if can_manage:
+            with c3:
+                if req["status"] == "RESERVED" and have == need and ui.confirm_dialog(
+                        f"disp_{rid}", "Dispatch", f"Dispatch the {need} reserved unit(s) for request #{rid}? They will be marked as issued.",
+                        confirm_label="Yes, dispatch"):
+                    ok, error, _ = attempt(fulfil_request, user, rid)
+                    if ok:
+                        st.toast(f"Request #{rid} dispatched")
+                        st.rerun()
+                if ui.confirm_dialog(f"cancel_{rid}", "Cancel request", f"Cancel request #{rid}? Reserved units go back into stock.",
+                                     confirm_label="Yes, cancel", danger=True):
+                    ok, error, _ = attempt(cancel_request, user, rid, "cancelled from the open list")
+                    if ok:
+                        st.toast(f"Request #{rid} cancelled; units released")
+                        st.rerun()
+        st.divider()
+    if error:
+        ui.alert_banner(error, "danger")
+
+
+with guard():
+    tab_new, tab_open, tab_history = st.tabs(["New emergency", "Open requests", "History"])
     hospitals = get_all_hospitals()
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        hosp_names = [h["name"] for h in hospitals]
-        default_idx = next((i for i, h in enumerate(hospitals) if h["id"] == _hosp_id), 0)
-        src_name = st.selectbox("Your Hospital", hosp_names, index=default_idx)
-    with col2:
-        need_bg = st.selectbox("Blood Group Needed", BLOOD_GROUPS, key="find_bg")
-    with col3:
-        need_units = st.number_input("Units Needed", min_value=1, max_value=50, value=3)
-
-    if st.button("Find Nearest Blood Source", use_container_width=True):
-        src_hosp = next((h for h in hospitals if h["name"] == src_name), None)
-        if src_hosp:
-            graph = get_road_graph(hospitals)
-            options = find_sources(graph, src_hosp["id"], need_bg, get_stock_by_hospital())    # one Dijkstra run
-            st.session_state["em_results"] = {
-                "group": need_bg, "units": int(need_units), "source_id": src_hosp["id"],
-                "rows": [{**dataclasses.asdict(o), "route": " → ".join(graph.nodes[n].name for n in o.path)} for o in options],
-                "backups": backup_hospitals(graph, src_hosp["id"]),
-            }
-
-    found = st.session_state.get("em_results")
-    if found:
-        if not found["rows"]:
-            alert_banner(f"No hospital in the network holds blood that a {found['group']} patient can safely receive.", "danger")
+    with tab_new:
+        flow = _flow()
+        ui.steps(STEPS, min(flow["step"], 3))
+        if flow["step"] == 1:
+            _step_need(flow, hospitals)
+        elif flow["step"] == 2:
+            _step_sources(flow, hospitals)
+        elif flow["step"] == 3:
+            _step_confirm(flow)
         else:
-            exact = sum(1 for r in found["rows"] if r["exact"])
-            alert_banner(f"{len(found['rows'])} source(s) found: {exact} with exact {found['group']}, "
-                         f"{len(found['rows']) - exact} with compatible groups.", "success")
-            styled_table(pd.DataFrame([{
-                "Hospital": r["hospital_name"],
-                "Sends": blood_badge(r["unit_group"]),
-                "Match": "exact" if r["exact"] else "compatible",
-                "Stock": f"{r['units_available']} units",
-                "Distance": f"{r['distance_km']} km",
-                "ETA": f"~{int(round(r['eta_min']))} min",
-                "Route": r["route"],
-            } for r in found["rows"][:8]]))
-            if found["backups"]:
-                with st.expander("Backup hospitals (fewest road hops first)"):
-                    styled_table(pd.DataFrame([{"Hospital": b["name"], "Hops": b["level"], "Distance": f"{b['distance_km']} km"}
-                                               for b in found["backups"][:6]]))
-
-            open_requests = [r for r in get_blood_requests(_scope)
-                             if r["status"] in ("PENDING", "RESERVED") and r["blood_group"] == found["group"]]
-            if open_requests:
-                section_header("Reserve for an open request")
-                labels = {f"#{r['id']} · {r['patient_name']} · {r['units_needed']}u {r['blood_group']}": r for r in open_requests}
-                chosen = labels[st.selectbox("Request", list(labels.keys()))]
-                reserve_error = None
-                for r in found["rows"][:8]:
-                    take = min(chosen["units_needed"], r["units_available"])
-                    label = f"Reserve {take} × {r['unit_group']} from {r['hospital_name']}"
-                    if st.button(label, key=f"resv_{r['hospital_id']}_{r['unit_group']}"):
-                        ok, reserve_error, _ = attempt(reserve_units, user, chosen["id"], r["hospital_id"], r["unit_group"], take)
-                        if ok:
-                            st.toast(f"Reserved {take} unit(s) at {r['hospital_name']}")
-                            st.rerun()
-                if reserve_error:
-                    alert_banner(reserve_error, "danger")
-            else:
-                st.caption(f"No open {found['group']} request to reserve for. Create one in the 'New Request' tab.")
+            _step_done(flow)
+    with tab_open:
+        _open_requests(user.role in (Role.SUPER_ADMIN, Role.HOSPITAL_ADMIN))
+    with tab_history:
+        scope = None if user.role is Role.SUPER_ADMIN else user.hospital_id
+        closed = [r for r in get_blood_requests(scope) if r["status"] in ("RESOLVED", "CANCELLED")]
+        ui.data_table(
+            closed,
+            [ui.Col("#", "id", align="right"), ui.Col("Patient", "patient_name"),
+             ui.Col("Group", "blood_group", render=lambda v, r: ui.blood_group_badge(v)), ui.Col("Units", "units_needed", align="right"),
+             ui.Col("Urgency", "urgency", render=lambda v, r: ui.status_pill(v)), ui.Col("Status", "status", render=lambda v, r: ui.status_pill(v)),
+             ui.Col("Hospital", "hospital_name"), ui.Col("Requested", "created_at", render=lambda v, r: str(v)[:16].replace("T", " ")),
+             ui.Col("Closed", "resolved_at", render=lambda v, r: str(v or "")[:16].replace("T", " "))],
+            key="em_hist", empty_title="No closed requests yet", empty_body="Dispatched and cancelled requests are listed here.")

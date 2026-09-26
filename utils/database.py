@@ -67,7 +67,8 @@ def log_ai_usage(feature: str, input_summary: str, response_preview: str,
                  hospital_id: int | None = None, user_id: int | None = None) -> None:
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO ai_logs (feature, input_summary, response_preview, hospital_id, user_id, created_at) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO ai_logs (feature, input_summary, response_preview, hospital_id, user_id, created_at)"
+            " VALUES (?,?,?,?,?,?)",
             (feature, input_summary, response_preview[:200], hospital_id, user_id, clock.now_iso()))
 
 
@@ -96,6 +97,11 @@ def get_blood_units(hospital_id: int | None = None) -> list[dict]:
     """Available, unexpired stock grouped by (hospital, group, expiry). Reserved/issued/expired units are not stock."""
     with _conn() as conn:
         return units_repo.grouped_stock(conn, hospital_id, _today())
+
+
+def get_unit_by_code(code: str) -> dict | None:
+    with _conn() as conn:
+        return units_repo.get_by_code(conn, code)
 
 
 def get_blood_summary(hospital_id: int | None = None) -> dict[str, int]:

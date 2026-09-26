@@ -115,6 +115,10 @@ def ai_panel(text: str) -> None:
                  f'<div class="ll-ai-body">{esc(text)}</div></div>'))
 
 
+def chat_bubble(role: str, text: str) -> None:
+    render(_flat(f'<div class="ll-bubble {"user" if role == "user" else "ai"}">{esc(text)}</div>'))
+
+
 # ------------------------------------------------------------------ stock grid
 def stock_grid(counts: Mapping[str, int], groups: Sequence[str] = t.BLOOD_HUE_KEYS) -> Html:
     """Eight cards, one per group: the count, a level word + glyph (not colour alone) and a proportional bar."""

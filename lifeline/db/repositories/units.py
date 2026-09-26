@@ -88,6 +88,11 @@ def get(conn: sqlite3.Connection, unit_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_by_code(conn: sqlite3.Connection, code: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM blood_units WHERE unit_code = ?", (code,)).fetchone()
+    return dict(row) if row else None
+
+
 def due_for_expiry(conn: sqlite3.Connection, today: str) -> list[dict[str, Any]]:
     """Available or reserved units whose expiry date has passed."""
     return [dict(r) for r in conn.execute(
